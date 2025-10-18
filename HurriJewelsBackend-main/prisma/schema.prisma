@@ -1,0 +1,844 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Role-based Access Control
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  VENDOR
+  USER
+}
+
+// User Management
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  password          String
+  fullName          String    @default("")
+  phone             String?
+  avatar            String?
+  address           String?
+  dob               DateTime?
+  role              Role      @default(USER)
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  isEmailVerified   Boolean   @default(false)
+  
+  emailVerificationToken String?
+  emailVerifyTokenExpires DateTime?
+  emailVerifiedAt    DateTime?
+  passwordResetToken String?
+  passwordResetExpires DateTime?
+  lastLogin         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt @map("UpdatedTime")
+  updatedBy         String?   @map("UpdatedBy")
+  deletedAt         DateTime? @map("DeletedTime")
+  deletedBy         String?   @map("DeletedBy")
+
+  // Relations
+  orders            Order[]
+  customerOrders    Order[]   @relation("OrderCustomer")
+  payments          Payment[]
+  reviews           Review[]
+  vendorProfile     VendorProfile?
+  shipping          ShippingInfo[]
+  sessions          Session[]
+  vendorVerificationReviews VendorVerification[] @relation("VendorVerificationReviewer")
+
+  // Relations
+  passwordResetTokens PasswordResetToken[]
+  blacklistedTokens   TokenBlacklist[]
+
+  // Blog Relations
+  author            Author?
+  viewEvents        ViewEvent[]
+  likes             Like[]
+  bookmarks         Bookmark[]
+
+  @@map("users")
+}
+
+// Vendor Management
+model VendorProfile {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  businessName      String
+  businessDescription String?
+  businessAddress   String?
+  businessPhone     String?
+  businessEmail     String?
+  taxId             String?
+  isVerified        Boolean   @default(false)
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  rating            Float     @default(0)
+  totalSales        Float     @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products          Product[]
+  orders            Order[]
+  verification      VendorVerification?
+  stores            Store[]
+
+  @@map("vendor_profiles")
+}
+
+// Vendor Verification
+model VendorVerification {
+  id                String    @id @default(cuid())
+  vendorId          String    @unique
+  status            String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  businessLicense   String?   // File path or URL
+  taxDocument       String?   // File path or URL
+  identityDocument  String?   // File path or URL
+  bankStatement     String?   // File path or URL
+  additionalDocs    String?   // JSON array of additional document paths
+  rejectionReason   String?
+  reviewedBy        String?   // Admin user ID who reviewed
+  reviewedAt        DateTime?
+  submittedAt       DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  vendor            VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  reviewer          User?     @relation("VendorVerificationReviewer", fields: [reviewedBy], references: [id])
+
+  @@map("vendor_verifications")
+}
+
+// Store Management
+model Store {
+  id                String    @id @default(cuid())
+  vendorId          String
+  name              String
+  slug              String    @unique
+  description       String?
+  logo              String?
+  banner            String?
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  postalCode        String?
+  phone             String?
+  email             String?
+  website           String?
+  socialMedia       String?   // JSON object with social media links
+  businessHours     String?   // JSON object with business hours
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  rating            Float     @default(0)
+  totalProducts     Int       @default(0)
+  totalOrders       Int       @default(0)
+  totalSales        Float     @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  vendor            VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  products          Product[]
+
+  @@map("stores")
+}
+
+// Product Management
+model Category {
+  id                String    @id @default(cuid())
+  name              String    @unique
+  slug              String    @unique
+  description       String?
+  image             String?
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt @map("UpdatedTime")
+  createdBy         String?
+  updatedBy         String?   @map("UpdatedBy")
+  deletedAt         DateTime? @map("DeletedTime")
+  deletedBy         String?   @map("DeletedBy")
+
+  // Relations
+  products          Product[]
+  menuItems         MenuItem[]
+
+  @@index([slug])
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("categories")
+}
+
+// Collections Management
+model Collection {
+  id         String   @id @default(cuid())
+  title      String
+  slug       String   @unique
+  description String?
+  image      String?
+  // Audit and status
+  isActive   Boolean  @default(true)
+  isDeleted  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime?
+  createdBy  String?
+  updatedBy  String?
+  deletedAt  DateTime?
+  deletedBy  String?
+
+  // Relations
+  menuItems  MenuItem[]
+
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("collections")
+}
+
+// Signature Pieces Management
+model SignaturePiece {
+  id         String   @id @default(cuid())
+  title      String
+  slug       String   @unique
+  description String?
+  image      String?
+  // Audit and status
+  isActive   Boolean  @default(true)
+  isDeleted  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime?
+  createdBy  String?
+  updatedBy  String?
+  deletedAt  DateTime?
+  deletedBy  String?
+
+  // Relations
+  menuItems  MenuItem[]
+
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("signature_pieces")
+}
+
+model Product {
+  id                String    @id @default(cuid())
+  name              String
+  description       String?
+  price             Float
+  comparePrice      Float?
+  cost              Float?
+  sku               String    @unique
+  barcode           String?
+  stockQuantity     Int       @default(0)
+  minStockLevel     Int       @default(0)
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  isFeatured        Boolean   @default(false)
+  images            String?
+  weight            Float?
+  dimensions        String?
+  vendorId          String
+  categoryId        String?
+  tags              String?
+  attributes        String?
+  storeId           String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  vendor            VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  category          Category? @relation(fields: [categoryId], references: [id])
+  store             Store? @relation(fields: [storeId], references: [id])
+  orderItems        OrderItem[]
+  reviews           Review[]
+
+  @@map("products")
+}
+
+// Order Management
+model Order {
+  id                String    @id @default(cuid())
+  orderNumber       String    @unique
+  userId            String
+  customerId        String
+  vendorId          String
+  status            String    @default("PENDING") // PENDING, CONFIRMED, PROCESSING, SHIPPED, DELIVERED, CANCELLED, REFUNDED
+  subtotal          Float
+  tax               Float     @default(0)
+  shippingCost      Float     @default(0)
+  discount          Float     @default(0)
+  total             Float
+  totalAmount       Float
+  currency          String    @default("USD")
+  notes             String?
+  shippingAddress   String?
+  billingAddress    String?
+  estimatedDelivery DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer          User      @relation("OrderCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  vendor            VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  items             OrderItem[]
+  payment           Payment?
+  shipping          ShippingInfo?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id                String    @id @default(cuid())
+  orderId           String
+  productId         String
+  quantity          Int
+  unitPrice         Float
+  totalPrice        Float
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product           Product   @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+// Payment Management
+model Payment {
+  id                String    @id @default(cuid())
+  orderId           String    @unique
+  userId            String
+  amount            Float
+  currency          String    @default("USD")
+  method            String    @default("CREDIT_CARD") // CREDIT_CARD, DEBIT_CARD, PAYPAL, BANK_TRANSFER, CASH
+  status            String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED, REFUNDED, CANCELLED
+  transactionId     String?
+  stripePaymentIntentId String?
+  gatewayResponse   String?
+  description       String?
+  paymentDate       DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+// Shipping Management
+model ShippingInfo {
+  id                String    @id @default(cuid())
+  orderId           String    @unique
+  customerId        String
+  address           String
+  city              String
+  state             String
+  country           String
+  postalCode        String
+  phone             String
+  trackingNumber    String?
+  carrier           String?
+  status            String    @default("PENDING") // PENDING, SHIPPED, DELIVERED, FAILED
+  method            String    @default("STANDARD") // STANDARD, EXPRESS, SAME_DAY
+  cost              Float
+  estimatedDelivery DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("shipping_info")
+}
+
+// AI Models
+model AIModel {
+  id                String    @id @default(cuid())
+  userId            String
+  type              String
+  model             String
+  prompt            String
+  context           String?
+  maxTokens         String?
+  temperature       String?
+  response          String?
+  metadata          String?
+  status            String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  error             String?
+  processingTime    Int?
+  tokensUsed        Int?
+  cost              Float?
+  requestTime       DateTime  @default(now())
+  responseTime      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  @@map("ai_models")
+}
+
+// Review Management
+model Review {
+  id                String    @id @default(cuid())
+  userId            String
+  productId         String
+  rating            Int
+  title             String?
+  comment           String?
+  isVerified        Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product           Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@map("reviews")
+}
+
+// Audit Logging
+model AuditLog {
+  id                String    @id @default(cuid())
+  entity            String    // Entity name (User, Product, Category, etc.)
+  entityId          String    // Entity ID
+  action            String    // CREATE, UPDATE, DELETE, PUBLISH, APPROVE, etc.
+  userId            String?   // Actor (user who performed the action)
+  meta              Json?     // Additional metadata
+  ipAddress         String?
+  userAgent         String?
+  createdAt         DateTime  @default(now())
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdBy         String?
+  updatedAt         DateTime  @updatedAt
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  @@map("audit_logs")
+}
+
+// Menu Management
+model MenuItem {
+  id          String      @id @default(uuid())
+  name        String
+  slug        String      @unique
+  description String?
+  type        String
+
+  parentId    String?     
+  parent      MenuItem?   @relation("MenuItemToChildren", fields: [parentId], references: [id])
+  children    MenuItem[]  @relation("MenuItemToChildren")
+
+  level       Int          @default(0)
+
+  country     String[]
+  language    String[]
+  tags        String[]
+
+  order       Int          @default(0)
+  icon        String?
+  image       String?
+
+  // Linking to domain objects (e.g., categories)
+  targetType  String?
+  categoryId  String?
+  category    Category?  @relation(fields: [categoryId], references: [id])
+  // Optional linkage to collections and signature pieces
+  collectionId      String?
+  collection        Collection?     @relation(fields: [collectionId], references: [id])
+  signaturePieceId  String?
+  signaturePiece    SignaturePiece? @relation(fields: [signaturePieceId], references: [id])
+
+  // Audit fields
+  isActive    Boolean      @default(true)
+  isDeleted   Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  createdBy   String?
+  updatedAt   DateTime     @updatedAt
+  updatedBy   String?
+  deletedAt   DateTime?
+  deletedBy   String?
+
+  @@map("menu_items")
+}
+
+
+// Session Management
+model Session {
+  id            String   @id @default(uuid())
+  userId        String
+  userAgent     String
+  ipAddress     String
+  isActive      Boolean  @default(true)
+  lastActivity  DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// Authentication: Password Reset Tokens
+model PasswordResetToken {
+  id         String   @id @default(uuid())
+  userId     String
+  token      String   @unique
+  expiresAt  DateTime
+  used       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+// Authentication: Token Blacklist
+model TokenBlacklist {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("token_blacklist")
+}
+
+// Blog System Models
+
+// Article Categories
+model ArticleCategory {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt @map("UpdatedTime")
+  createdBy   String?
+  updatedBy   String?  @map("UpdatedBy")
+  deletedAt   DateTime? @map("DeletedTime")
+  deletedBy   String?  @map("DeletedBy")
+
+  // Relations
+  articles    ArticleOnCategories[]
+
+  @@index([slug])
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("article_categories")
+}
+
+// Article Tags
+model ArticleTag {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  isActive    Boolean  @default(true)
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt @map("UpdatedTime")
+  createdBy   String?
+  updatedBy   String?  @map("UpdatedBy")
+  deletedAt   DateTime? @map("DeletedTime")
+  deletedBy   String?  @map("DeletedBy")
+
+  // Relations
+  articles    ArticleOnTags[]
+
+  @@index([slug])
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("article_tags")
+}
+
+// Authors
+model Author {
+  id          String   @id @default(cuid())
+  userId      String?  @unique // optional link; not required for creation
+  displayName String
+  bio         String?
+  experience  String?
+  avatarUrl   String?
+  isActive    Boolean  @default(true)
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt @map("UpdatedTime")
+  createdBy   String?
+  updatedBy   String?  @map("UpdatedBy")
+  deletedAt   DateTime? @map("DeletedTime")
+  deletedBy   String?  @map("DeletedBy")
+
+  // Relations
+  user        User?    @relation(fields: [userId], references: [id])
+  articles    Article[]
+
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("authors")
+}
+
+// Article Status Enum
+enum ArticleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// Articles
+model Article {
+  id            String        @id @default(cuid())
+  authorId      String
+  title         String
+  slug          String        @unique
+  summary       String?       @db.Text  // Short summary/excerpt
+  content       Json          // Rich Text Editor JSON structure for main content
+  coverUrl      String?
+  coverAlt      String?
+  readMinutes   Int
+  isFeatured    Boolean       @default(false)
+  status        ArticleStatus @default(DRAFT)
+  viewsCount    Int           @default(0)
+  likesCount    Int           @default(0)
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  metaImageUrl    String?
+  language        String?     @default("en")
+  isActive      Boolean       @default(true)
+  isDeleted     Boolean       @default(false)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt @map("UpdatedTime")
+  publishedAt   DateTime     @default(now())
+  createdBy     String?
+  updatedBy     String?      @map("UpdatedBy")
+  deletedAt     DateTime?    @map("DeletedTime")
+  deletedBy     String?      @map("DeletedBy")
+
+  // Relations
+  author        Author        @relation(fields: [authorId], references: [id])
+  categories    ArticleOnCategories[]
+  tags          ArticleOnTags[]
+  views         ViewEvent[]
+  likes         Like[]
+  bookmarks     Bookmark[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([isFeatured])
+  @@index([publishedAt])
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("articles")
+}
+
+// Article-Category Many-to-Many
+model ArticleOnCategories {
+  id                String          @id @default(cuid())
+  articleId         String
+  articleCategoryId String
+  createdAt         DateTime        @default(now())
+  createdBy         String?
+
+  // Relations
+  article           Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  category          ArticleCategory @relation(fields: [articleCategoryId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, articleCategoryId])
+  @@map("article_on_categories")
+}
+
+// Article-Tag Many-to-Many
+model ArticleOnTags {
+  id         String      @id @default(cuid())
+  articleId  String
+  articleTagId String
+  createdAt  DateTime    @default(now())
+  createdBy  String?
+
+  // Relations
+  article    Article     @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag        ArticleTag  @relation(fields: [articleTagId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, articleTagId])
+  @@map("article_on_tags")
+}
+
+// Engagement Models
+
+// Entity Type Enum
+enum EntityType {
+  ARTICLE
+  PRODUCT
+}
+
+// View Events
+model ViewEvent {
+  id         String     @id @default(cuid())
+  entityType EntityType
+  entityId   String
+  ipHash     String
+  userId     String?
+  isActive   Boolean    @default(true)
+  isDeleted  Boolean    @default(false)
+  createdAt  DateTime  @default(now())
+  createdBy  String?
+  updatedAt  DateTime  @updatedAt @map("UpdatedTime")
+  updatedBy  String?   @map("UpdatedBy")
+  deletedAt  DateTime? @map("DeletedTime")
+  deletedBy  String?   @map("DeletedBy")
+
+  // Relations
+  user       User?      @relation(fields: [userId], references: [id])
+  article    Article?   @relation(fields: [entityId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@index([ipHash])
+  @@map("view_events")
+}
+
+// Likes
+model Like {
+  id         String     @id @default(cuid())
+  entityType EntityType
+  entityId   String
+  userId     String
+  isActive   Boolean    @default(true)
+  isDeleted  Boolean    @default(false)
+  createdAt  DateTime  @default(now())
+  createdBy  String?
+  updatedAt  DateTime  @updatedAt @map("UpdatedTime")
+  updatedBy  String?   @map("UpdatedBy")
+  deletedAt  DateTime? @map("DeletedTime")
+  deletedBy  String?   @map("DeletedBy")
+
+  // Relations
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article    Article?   @relation(fields: [entityId], references: [id])
+
+  @@unique([userId, entityType, entityId])
+  @@map("likes")
+}
+
+// Bookmarks
+model Bookmark {
+  id         String     @id @default(cuid())
+  entityType EntityType
+  entityId   String
+  userId     String
+  isActive   Boolean    @default(true)
+  isDeleted  Boolean    @default(false)
+  createdAt  DateTime  @default(now())
+  createdBy  String?
+  updatedAt  DateTime  @updatedAt @map("UpdatedTime")
+  updatedBy  String?   @map("UpdatedBy")
+  deletedAt  DateTime? @map("DeletedTime")
+  deletedBy  String?   @map("DeletedBy")
+
+  // Relations
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article    Article?   @relation(fields: [entityId], references: [id])
+
+  @@unique([userId, entityType, entityId])
+  @@map("bookmarks")
+}
+
+// Newsletter Signups
+model NewsletterSignup {
+  id         String    @id @default(cuid())
+  email      String    @unique
+  source     String?
+  isActive   Boolean   @default(true)
+  isDeleted  Boolean   @default(false)
+  createdAt  DateTime @default(now())
+  createdBy  String?
+  updatedAt  DateTime @updatedAt @map("UpdatedTime")
+  updatedBy  String?  @map("UpdatedBy")
+  deletedAt  DateTime? @map("DeletedTime")
+  deletedBy  String?  @map("DeletedBy")
+
+  @@index([email])
+  @@map("newsletter_signups")
+}
+

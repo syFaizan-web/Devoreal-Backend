@@ -134,6 +134,27 @@ export class FileUploadService {
     return this.uploadFile(file, 'vendors');
   }
 
+  // Specific method for uploading product videos
+  async uploadProductVideo(file: Express.Multer.File): Promise<string> {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    // Validate file type for videos only
+    const allowedMimeTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/flv', 'video/webm'];
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException('Invalid file type. Only MP4, AVI, MOV, WMV, FLV, and WebM videos are allowed.');
+    }
+
+    // Validate file size (50MB max for product videos)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      throw new BadRequestException('File size too large. Maximum size is 50MB.');
+    }
+
+    return this.uploadFile(file, 'products/videos');
+  }
+
   async deleteFile(filePath: string): Promise<void> {
     try {
       const uploadPath = this.configService.get('UPLOAD_PATH', './uploads');

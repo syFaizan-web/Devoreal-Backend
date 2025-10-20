@@ -247,6 +247,381 @@ model SignaturePiece {
   @@map("signature_pieces")
 }
 
+// Main Product Table - for main screen listing
+model ProductMain {
+  id                String    @id @default(cuid())
+  name              String
+  image             String?    // Main product image
+  shortDescription  String?   // Brief description for listing
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+
+  // Relations to child tables
+  basic             ProductBasic?
+  pricing           ProductPricing?
+  media             ProductMedia?
+  seo               ProductSeo?
+  association       ProductAssociation?
+  attributesTag     ProductAttributesTag?
+  variants          ProductVariants?
+  inventory         ProductInventory?
+  reels             ProductReels?
+  itemDetails       ProductItemDetails?
+  shippingPolicies  ProductShippingPolicies?
+
+  @@map("products_main")
+}
+
+// Basics Tab
+model ProductBasic {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  category          String?
+  collection        String?
+  brand             String?
+  weight            String?
+  gender            String?
+  size              String?
+  colors            String?   // JSON array
+  colorName         String?
+  description       String?
+  tagNumber         String?
+  stock             String?
+  tags              String?   // JSON array
+  slug              String?
+  status            String?
+  visibility        String?
+  publishedAt       String?
+  isSignaturePiece  Boolean?
+  isFeatured        Boolean?
+  signatureLabel    String?
+  signatureStory    String?
+  allowBackorder    Boolean?
+  isPreorder        Boolean?
+  minOrderQty       String?
+  maxOrderQty       String?
+  leadTimeDays      String?
+  hsCode            String?
+  warrantyInfo      String?
+  sizeGuideUrl      String?
+  badges            String?   // JSON array
+  rating            String?
+  reviewsCount      String?
+  views             String?
+  sales             String?
+  quantity          String?
+  reviewUi          String?
+  soldUi            String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_basic")
+}
+
+// Pricing Tab
+model ProductPricing {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  price             String?
+  priceUSD          String?
+  currency          String?
+  discount          String?
+  discountType      String?
+  compareAtPrice    String?
+  saleStartAt       String?
+  saleEndAt         String?
+  discountLabel     String?
+  tax               String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_pricing")
+}
+
+// Media Tab
+model ProductMedia {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  images            String?   // JSON array of image URLs
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_media")
+}
+
+// SEO Tab
+model ProductSeo {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  seoTitle          String?
+  seoDescription    String?
+  canonicalUrl      String?
+  ogImage           String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_seo")
+}
+
+// Associations Tab
+model ProductAssociation {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  category          String?
+  collection        String?
+  brand             String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_association")
+}
+
+// Attributes & Tags Tab
+model ProductAttributesTag {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  attributes        String?   // JSON object
+  tags              String?   // JSON array
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_attributes_tag")
+}
+
+// Options & Variants Tab
+model ProductVariants {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  variants          String?   // JSON array of variant objects
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_variants")
+}
+
+// Inventory Tab
+model ProductInventory {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  sku               String?
+  barcode           String?
+  inventoryQuantity String?
+  lowStockThreshold String?
+  reorderPoint      String?
+  reorderQuantity   String?
+  supplier          String?
+  supplierSku       String?
+  costPrice         String?
+  margin            String?
+  location          String?
+  warehouse         String?
+  binLocation       String?
+  lastRestocked     String?
+  nextRestockDate   String?
+  inventoryStatus   String?
+  trackInventory    Boolean?
+  reservedQuantity  String?
+  availableQuantity String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_inventory")
+}
+
+// Reels Tab
+model ProductReels {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  platform          String?
+  videoFile          String?   // File path or URL
+  reelTitle          String?
+  reelDescription    String?
+  reelLanguage       String?
+  captionsUrl        String?
+  thumbnailUrl       String?
+  durationSec        String?
+  aspectRatio        String?
+  ctaUrl             String?
+  reelTags           String?
+  isPublic           Boolean?
+  isPinned           Boolean?
+  reelOrder          String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_reels")
+}
+
+// Client Sections Tab (Item Details)
+model ProductItemDetails {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  material          String?
+  warranty           String?
+  certification      String?
+  vendorName         String?
+  shippingFreeText   String?
+  qualityGuaranteeText String?
+  careInstructionsText String?
+  didYouKnow         String?
+  faqs               String?   // JSON array
+  sellerBlurb        String?
+  trustBadge1        String?
+  trustBadge2        String?
+  trustBadge3        String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_item_details")
+}
+
+// Shipping & Policies Tab
+model ProductShippingPolicies {
+  id                String    @id @default(cuid())
+  productId         String    @unique
+  shippingInfo      String?
+  shippingNotes     String?
+  packagingDetails  String?
+  returnPolicy       String?
+  returnWindowDays   String?
+  returnFees         String?
+  isReturnable       Boolean?
+  exchangePolicy     String?
+  warrantyPeriodMonths String?
+  warrantyType       String?
+  originCountry      String?
+  weightKg           String?
+  dimensions         String?
+  
+  // Audit fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Relations
+  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_shipping_policies")
+}
+
+// Legacy Product model - keeping for backward compatibility
 model Product {
   id                String    @id @default(cuid())
   name              String

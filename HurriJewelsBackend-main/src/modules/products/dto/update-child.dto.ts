@@ -9,7 +9,6 @@ export class UpdateChildDto {
       'pricing', 
       'media', 
       'seo', 
-      'association', 
       'attributesTag', 
       'variants', 
       'inventory', 

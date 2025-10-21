@@ -9,7 +9,11 @@ import {
   Body, 
   Req,
   BadRequestException,
-  NotFoundException
+  NotFoundException,
+  InternalServerErrorException,
+  HttpStatus,
+  HttpException,
+  Logger
 } from '@nestjs/common';
 import { Public } from '../auth/decorators/public.decorator';
 import { 
@@ -41,6 +45,8 @@ import { Role } from '../../common/enums/role.enum';
 @ApiTags('products')
 @Controller('products')
 export class ProductsController {
+  private readonly logger = new Logger(ProductsController.name);
+
   constructor(
     private readonly productsService: ProductsService,
     private readonly fileUploadService: FileUploadService
@@ -57,8 +63,23 @@ export class ProductsController {
     status: 400,
     description: 'Bad request - Invalid query parameters',
   })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async getAllProducts() {
-    return this.productsService.getAllProducts();
+    try {
+      this.logger.log('Fetching all products for main screen');
+      const products = await this.productsService.getAllProducts();
+      this.logger.log(`Successfully fetched ${products.length} products`);
+      return products;
+    } catch (error) {
+      this.logger.error('Failed to fetch products for main screen', error.stack);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch products: ' + error.message);
+    }
   }
 
   // Legacy endpoint for backward compatibility
@@ -85,8 +106,23 @@ export class ProductsController {
     status: 400,
     description: 'Bad request - Invalid query parameters',
   })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async findAll(@Query() query: any) {
-    return this.productsService.findAll();
+    try {
+      this.logger.log('Fetching all products (legacy endpoint)', { query });
+      const products = await this.productsService.findAll();
+      this.logger.log(`Successfully fetched ${products.length} products (legacy)`);
+      return products;
+    } catch (error) {
+      this.logger.error('Failed to fetch products (legacy endpoint)', error.stack, { query });
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch products: ' + error.message);
+    }
   }
 
   @Get(':id')
@@ -101,8 +137,31 @@ export class ProductsController {
     status: 404,
     description: 'Product not found',
   })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async getProductFullDetail(@Param('id') id: string) {
-    return this.productsService.getProductFullDetail(id);
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Fetching full product detail', { productId: id });
+      const product = await this.productsService.getProductFullDetail(id);
+      this.logger.log('Successfully fetched product detail', { productId: id, productName: product.name });
+      return product;
+    } catch (error) {
+      this.logger.error('Failed to fetch product detail', error.stack, { productId: id });
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch product detail: ' + error.message);
+    }
   }
 
   // Legacy endpoint for backward compatibility
@@ -118,8 +177,31 @@ export class ProductsController {
     status: 404,
     description: 'Product not found',
   })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async findOne(@Param('id') id: string) {
-    return this.productsService.findOne(id);
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Fetching product by ID (legacy endpoint)', { productId: id });
+      const product = await this.productsService.findOne(id);
+      this.logger.log('Successfully fetched product (legacy)', { productId: id, productName: product.name });
+      return product;
+    } catch (error) {
+      this.logger.error('Failed to fetch product (legacy endpoint)', error.stack, { productId: id });
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch product: ' + error.message);
+    }
   }
 
   @Post()
@@ -135,8 +217,9 @@ export class ProductsController {
       type: 'object',
       properties: {
         name: { type: 'string' },
-        image: { type: 'string' },
         shortDescription: { type: 'string' },
+        price: { type: 'string' },
+        image: { type: 'string' },
         // Basic tab fields
         'basic[categoryId]': { type: 'string' },
         'basic[collectionId]': { type: 'string' },
@@ -166,7 +249,6 @@ export class ProductsController {
         'basic[leadTimeDays]': { type: 'string' },
         'basic[hsCode]': { type: 'string' },
         'basic[warrantyInfo]': { type: 'string' },
-        'basic[sizeGuideUrl]': { type: 'string' },
         'basic[badges]': { type: 'string' },
         // Removed rating, reviewsCount, views - these are now read-only in ProductMain
         'basic[sales]': { type: 'string' },
@@ -184,7 +266,9 @@ export class ProductsController {
         'pricing[saleEndAt]': { type: 'string' },
         'pricing[discountLabel]': { type: 'string' },
         'pricing[tax]': { type: 'string' },
-        // Media tab fields - images handled via file upload only
+        // Media tab fields - multiple file uploads
+        'media[images]': { type: 'string' },
+        'media[videoFile]': { type: 'string' },
         // Multiple image uploads
         images: {
           type: 'array',
@@ -192,6 +276,11 @@ export class ProductsController {
             type: 'string',
             format: 'binary'
           }
+        },
+        // Main image upload
+        mainImage: {
+          type: 'string',
+          format: 'binary'
         },
         // SEO tab fields
         'seo[seoTitle]': { type: 'string' },
@@ -281,96 +370,251 @@ export class ProductsController {
     status: 400,
     description: 'Bad request - Invalid input data',
   })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async createMain(@Req() request: FastifyRequest) {
     try {
-      const parts = request.parts();
+      this.logger.log('Creating new product with tab-wise structure');
+      
+      // Extract form fields from request.body (since attachFieldsToBody: true)
+      const bodyFields = request.body as any || {};
+      console.log('📋 Form fields from request.body:', bodyFields);
+      
       const fields: any = {};
       const uploadedImages: string[] = [];
       let videoFile: Express.Multer.File | null = null;
+      let mainImageFile: Express.Multer.File | null = null;
 
-      // Process multipart form data
-      for await (const part of parts) {
-        if ((part as any).file) {
-          // Handle file uploads
+      // Process form data from request.body
+      for (const [key, value] of Object.entries(bodyFields)) {
+        console.log(`🔍 Processing field: ${key}, type: ${typeof value}, value:`, value);
+        
+        if ((value as any)?.filename) {
+          // This is a file upload
+          console.log(`📷 Processing file: ${key}`);
           const file = {
-            fieldname: part.fieldname,
-            originalname: (part as any).filename,
-            encoding: '7bit',
-            mimetype: (part as any).mimetype,
-            size: (part as any).file.bytesRead,
-            buffer: await (part as any).toBuffer(),
-            stream: (part as any).file,
+            fieldname: (value as any).fieldname,
+            originalname: (value as any).filename,
+            encoding: (value as any).encoding,
+            mimetype: (value as any).mimetype,
+            size: (value as any).file?.bytesRead || (value as any)._buf?.length || 0,
+            buffer: (value as any)._buf,
+            stream: (value as any).file,
             destination: '',
-            filename: (part as any).filename,
+            filename: (value as any).filename,
             path: '',
-          };
+          } as Express.Multer.File;
 
-          if (part.fieldname === 'images') {
+          if (key === 'images') {
             // Handle multiple image uploads
             const imagePath = await this.fileUploadService.uploadProductImage(file);
             uploadedImages.push(imagePath);
-          } else if (part.fieldname === 'videoFile') {
+            console.log(`📷 Uploaded image: ${imagePath}`);
+          } else if (key === 'mainImage') {
+            // Handle main image upload
+            const mainImagePath = await this.fileUploadService.uploadProductImage(file);
+            fields['image'] = mainImagePath;
+            console.log(`📷 Uploaded main image: ${mainImagePath}`);
+          } else if (key === 'image') {
+            // Handle main image upload (alternative field name)
+            const mainImagePath = await this.fileUploadService.uploadProductImage(file);
+            fields['image'] = mainImagePath;
+            console.log(`📷 Uploaded main image (image field): ${mainImagePath}`);
+          } else if (key === 'videoFile') {
             // Handle video file upload
             videoFile = file;
             const videoPath = await this.fileUploadService.uploadProductVideo(file);
-            fields['reels[videoFile]'] = videoPath;
+            fields['media[videoFile]'] = videoPath;
+            console.log(`🎥 Uploaded video: ${videoPath}`);
           }
         } else {
-          // Handle form fields
-          const value = (part as any).value;
+          // This is a form field - handle different value structures
+          let fieldValue;
           
-          // Parse boolean fields
-          if (['basic[isSignaturePiece]', 'basic[isFeatured]', 'basic[allowBackorder]', 'basic[isPreorder]', 'inventory[trackInventory]', 'reels[isPublic]', 'reels[isPinned]', 'shippingPolicies[isReturnable]'].includes(part.fieldname)) {
-            fields[part.fieldname] = value === 'true';
+          if ((value as any)?.value !== undefined) {
+            // Value is wrapped in an object with 'value' property
+            fieldValue = (value as any).value;
+          } else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            // Value is directly the field value
+            fieldValue = value;
           } else {
-            fields[part.fieldname] = value;
+            // Try to extract value from other possible structures
+            fieldValue = value;
           }
+          
+          fields[key] = fieldValue;
+          console.log(`📝 Form field added: ${key} = ${fieldValue}`);
         }
       }
 
-      // Process uploaded images
+      // Process uploaded images and media files
       if (uploadedImages.length > 0) {
         fields['media[images]'] = JSON.stringify(uploadedImages);
+        console.log(`📷 Processed ${uploadedImages.length} images for media tab`);
+      }
+
+      // Ensure main image is set if not already set
+      if (!fields['image'] && uploadedImages.length > 0) {
+        fields['image'] = uploadedImages[0]; // Use first uploaded image as main image
+        console.log(`📷 Set main image from uploaded images: ${uploadedImages[0]}`);
+      } else if (fields['image']) {
+        console.log(`📷 Main image already set: ${fields['image']}`);
+      } else {
+        console.log(`❌ No main image set`);
       }
 
       // Convert flat fields to nested structure
       const productData = this.convertFlatToNested(fields);
       productData.createdBy = (request as any).user?.id || 'public-user'; // Default for public access
 
-      return this.productsService.createMain(productData);
+      // Additional validation before calling service - name is still required
+      if (!productData.name || productData.name.trim() === '') {
+        throw new BadRequestException('Product name is required and cannot be empty');
+      }
+
+      console.log('Final product data being sent to service:', JSON.stringify(productData, null, 2));
+      const result = await this.productsService.createMain(productData);
+      
+      this.logger.log('Product created successfully', { 
+        productId: result.productMain.id, 
+        productName: result.productMain.name 
+      });
+      
+      return result;
     } catch (error) {
+      this.logger.error('Failed to create product', error.stack);
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException('Failed to create product: ' + error.message);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to create product: ' + error.message);
     }
   }
 
   // Helper method to convert flat form fields to nested structure
   private convertFlatToNested(fields: any): any {
+    // Debug logging to see what fields we're receiving
+    console.log('Processing fields:', JSON.stringify(fields, null, 2));
+    
     const result: any = {
-      name: fields.name,
-      image: fields.image,
-      shortDescription: fields.shortDescription,
+      name: fields.name || fields['basic[name]'] || '',
+      shortDescription: fields.shortDescription || fields['basic[shortDescription]'] || '',
+      price: fields.price ? parseFloat(fields.price) : undefined,
+      image: fields.image || fields['basic[image]'] || '',
     };
+
+    // Ensure name is not empty - name is still required for product creation
+    if (!result.name || result.name.trim() === '') {
+      throw new BadRequestException('Product name is required and cannot be empty');
+    }
 
     // Process each tab (removed association)
     const tabs = ['basic', 'pricing', 'media', 'seo', 'attributesTag', 'variants', 'inventory', 'reels', 'itemDetails', 'shippingPolicies'];
     
+    // Define field mappings for each tab
+    const tabFieldMappings = {
+      basic: ['categoryId', 'collectionId', 'signaturePieceId', 'brand', 'weight', 'gender', 'size', 'colors', 'colorName', 'description', 'tagNumber', 'stock', 'tags', 'slug', 'status', 'visibility', 'publishedAt', 'isSignaturePiece', 'isFeatured', 'signatureLabel', 'signatureStory', 'allowBackorder', 'isPreorder', 'minOrderQty', 'maxOrderQty', 'leadTimeDays', 'hsCode', 'warrantyInfo', 'badges', 'sales', 'quantity', 'reviewUi', 'soldUi'],
+      pricing: ['price', 'priceUSD', 'currency', 'discount', 'discountType', 'compareAtPrice', 'saleStartAt', 'saleEndAt', 'discountLabel', 'tax'],
+      media: ['images', 'videoFile'],
+      seo: ['seoTitle', 'seoDescription', 'canonicalUrl', 'ogImage'],
+      attributesTag: ['attributes', 'tags'],
+      variants: ['variants'],
+      inventory: ['sku', 'barcode', 'inventoryQuantity', 'lowStockThreshold', 'reorderPoint', 'reorderQuantity', 'supplier', 'supplierSku', 'costPrice', 'margin', 'location', 'warehouse', 'binLocation', 'lastRestocked', 'nextRestockDate', 'inventoryStatus', 'trackInventory', 'reservedQuantity', 'availableQuantity'],
+      reels: ['platform', 'reelTitle', 'reelDescription', 'reelLanguage', 'captionsUrl', 'thumbnailUrl', 'durationSec', 'aspectRatio', 'ctaUrl', 'reelTags', 'isPublic', 'isPinned', 'reelOrder'],
+      itemDetails: ['material', 'warranty', 'certification', 'vendorName', 'shippingFreeText', 'qualityGuaranteeText', 'careInstructionsText', 'didYouKnow', 'faqs', 'sellerBlurb', 'trustBadges'],
+      shippingPolicies: ['shippingInfo', 'shippingNotes', 'packagingDetails', 'returnPolicy', 'returnWindowDays', 'returnFees', 'isReturnable', 'exchangePolicy', 'warrantyPeriodMonths', 'warrantyType', 'originCountry', 'weightKg', 'dimensions']
+    };
+    
     tabs.forEach(tab => {
       const tabData: any = {};
+      const tabFields = tabFieldMappings[tab] || [];
+      
+      console.log(`\n🔍 Processing ${tab} tab...`);
+      
+      // First, check if there's a direct JSON string for this tab
+      if (fields[tab] && typeof fields[tab] === 'string') {
+        try {
+          const parsedData = JSON.parse(fields[tab]);
+          console.log(`  ✅ Found JSON string for ${tab} tab, parsing...`);
+          
+          // Convert data types based on field names
+          Object.keys(parsedData).forEach(fieldName => {
+            let value = parsedData[fieldName];
+            
+            // Convert data types based on field name
+            if (['weight', 'price', 'priceUSD', 'discount', 'compareAtPrice', 'tax', 'costPrice', 'margin', 'returnFees', 'weightKg'].includes(fieldName)) {
+              value = value ? parseFloat(value) : undefined;
+            } else if (['stock', 'minOrderQty', 'maxOrderQty', 'leadTimeDays', 'sales', 'quantity', 'inventoryQuantity', 'lowStockThreshold', 'reorderPoint', 'reorderQuantity', 'reservedQuantity', 'availableQuantity', 'durationSec', 'reelOrder', 'returnWindowDays', 'warrantyPeriodMonths'].includes(fieldName)) {
+              value = value ? parseInt(value) : undefined;
+            } else if (['isSignaturePiece', 'isFeatured', 'allowBackorder', 'isPreorder', 'trackInventory', 'isPublic', 'isPinned', 'isReturnable'].includes(fieldName)) {
+              value = value === 'true' || value === true;
+            }
+            
+            tabData[fieldName] = value;
+          });
+          
+          console.log(`  ✅ Parsed ${tab} tab with ${Object.keys(tabData).length} fields:`, Object.keys(tabData));
+        } catch (error) {
+          console.log(`  ❌ Failed to parse JSON for ${tab} tab:`, error.message);
+        }
+      }
+      
+      // Then, check for tab[field] pattern (e.g., basic[brand], pricing[price])
+      console.log(`📋 Looking for fields matching pattern: ${tab}[field]`);
       Object.keys(fields).forEach(key => {
         if (key.startsWith(`${tab}[`) && key.endsWith(']')) {
           const fieldName = key.substring(tab.length + 1, key.length - 1);
-          tabData[fieldName] = fields[key];
+          let value = fields[key];
+          
+          console.log(`  ✅ Found ${tab}[${fieldName}] = ${value}`);
+          
+          // Convert data types based on field name
+          if (['weight', 'price', 'priceUSD', 'discount', 'compareAtPrice', 'tax', 'costPrice', 'margin', 'returnFees', 'weightKg'].includes(fieldName)) {
+            value = value ? parseFloat(value) : undefined;
+          } else if (['stock', 'minOrderQty', 'maxOrderQty', 'leadTimeDays', 'sales', 'quantity', 'inventoryQuantity', 'lowStockThreshold', 'reorderPoint', 'reorderQuantity', 'reservedQuantity', 'availableQuantity', 'durationSec', 'reelOrder', 'returnWindowDays', 'warrantyPeriodMonths'].includes(fieldName)) {
+            value = value ? parseInt(value) : undefined;
+          } else if (['isSignaturePiece', 'isFeatured', 'allowBackorder', 'isPreorder', 'trackInventory', 'isPublic', 'isPinned', 'isReturnable'].includes(fieldName)) {
+            value = value === 'true' || value === true;
+          }
+          
+          tabData[fieldName] = value;
         }
       });
       
+      // Finally, check for direct field names that belong to this tab (fallback)
+      console.log(`📋 Checking direct field names for ${tab} tab...`);
+      tabFields.forEach(fieldName => {
+        if (fields[fieldName] !== undefined && !tabData[fieldName]) {
+          let value = fields[fieldName];
+          console.log(`  ✅ Found direct field ${fieldName} = ${value}`);
+          
+          // Convert data types based on field name
+          if (['weight', 'price', 'priceUSD', 'discount', 'compareAtPrice', 'tax', 'costPrice', 'margin', 'returnFees', 'weightKg'].includes(fieldName)) {
+            value = value ? parseFloat(value) : undefined;
+          } else if (['stock', 'minOrderQty', 'maxOrderQty', 'leadTimeDays', 'sales', 'quantity', 'inventoryQuantity', 'lowStockThreshold', 'reorderPoint', 'reorderQuantity', 'reservedQuantity', 'availableQuantity', 'durationSec', 'reelOrder', 'returnWindowDays', 'warrantyPeriodMonths'].includes(fieldName)) {
+            value = value ? parseInt(value) : undefined;
+          } else if (['isSignaturePiece', 'isFeatured', 'allowBackorder', 'isPreorder', 'trackInventory', 'isPublic', 'isPinned', 'isReturnable'].includes(fieldName)) {
+            value = value === 'true' || value === true;
+          }
+          
+          tabData[fieldName] = value;
+        }
+      });
+      
+      // Always create tab data if any fields are found, even if empty
       if (Object.keys(tabData).length > 0) {
         result[tab] = tabData;
+        console.log(`✅ ${tab} tab created with ${Object.keys(tabData).length} fields:`, Object.keys(tabData));
+      } else {
+        console.log(`❌ ${tab} tab has no fields - skipping`);
       }
     });
 
+    console.log('Converted result:', JSON.stringify(result, null, 2));
     return result;
   }
 
@@ -417,8 +661,22 @@ export class ProductsController {
     status: 400,
     description: 'Bad request - Invalid input data',
   })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Authentication required',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async create(@Req() request: FastifyRequest) {
     try {
+      this.logger.log('Creating new product (legacy endpoint)');
+      
       const parts = request.parts();
       const fields: any = {};
       let imageFile: Express.Multer.File | null = null;
@@ -468,15 +726,26 @@ export class ProductsController {
       }
 
       // Create product
-      return this.productsService.create({
+      const result = await this.productsService.create({
         ...fields,
         images: imagePath
       });
+
+      this.logger.log('Product created successfully (legacy)', { 
+        productId: result.id, 
+        productName: result.name 
+      });
+
+      return result;
     } catch (error) {
+      this.logger.error('Failed to create product (legacy endpoint)', error.stack);
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException('Failed to create product: ' + error.message);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to create product: ' + error.message);
     }
   }
 
@@ -497,20 +766,46 @@ export class ProductsController {
     status: 400,
     description: 'Bad request - Invalid tab name or data',
   })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Authentication required',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async updateChild(@Param('id') id: string, @Body() updateChildDto: UpdateChildDto, @Req() req: FastifyRequest) {
     try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Updating child tab', { productId: id, tabName: updateChildDto.tabName });
+      
       const userId = (req as any).user?.id;
       const updateData = {
         ...updateChildDto,
         updatedBy: userId,
       };
       
-      return this.productsService.updateChild(id, updateData);
+      const result = await this.productsService.updateChild(id, updateData);
+      
+      this.logger.log('Child tab updated successfully', { 
+        productId: id, 
+        tabName: updateChildDto.tabName,
+        tabId: result.id 
+      });
+      
+      return result;
     } catch (error) {
+      this.logger.error('Failed to update child tab', error.stack, { productId: id, tabName: updateChildDto.tabName });
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
-      throw new BadRequestException('Failed to update child tab: ' + error.message);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update child tab: ' + error.message);
     }
   }
 

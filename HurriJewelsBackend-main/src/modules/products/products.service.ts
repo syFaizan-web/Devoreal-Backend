@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, InternalServerErrorException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, InternalServerErrorException, Logger, UnprocessableEntityException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { FileUploadService } from '../../common/file-upload/file-upload.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -15,19 +15,60 @@ export class ProductsService {
     private readonly fileUploadService: FileUploadService
   ) {}
 
+  /**
+   * Helper method to handle common Prisma errors
+   */
+  private handlePrismaError(error: any, operation: string, context?: any): never {
+    this.logger.error(`Prisma error during ${operation}`, error.stack, context);
+    
+    switch (error.code) {
+      case 'P2002':
+        throw new ConflictException(`A record with this data already exists`);
+      case 'P2003':
+        throw new BadRequestException('Invalid reference to related record');
+      case 'P2025':
+        throw new NotFoundException('Record not found');
+      case 'P2021':
+        throw new NotFoundException('Table does not exist');
+      case 'P2022':
+        throw new NotFoundException('Column does not exist');
+      default:
+        throw new InternalServerErrorException(`Database error during ${operation}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Helper method to validate required fields
+   */
+  private validateRequiredFields(data: any, requiredFields: string[], operation: string): void {
+    for (const field of requiredFields) {
+      if (!data[field] || (typeof data[field] === 'string' && data[field].trim() === '')) {
+        throw new BadRequestException(`${field} is required for ${operation}`);
+      }
+    }
+  }
+
   async create(createProductDto: CreateProductDto) {
     try {
       this.logger.log('Creating new product', { name: createProductDto.name, categoryId: createProductDto.categoryId });
       
-      // Validate required fields
-      if (!createProductDto.name || createProductDto.name.trim() === '') {
-        throw new BadRequestException('Product name is required');
-      }
+      // Validate required fields using helper method
+      this.validateRequiredFields(createProductDto, ['name', 'categoryId'], 'product creation');
+      
       if (!createProductDto.price || createProductDto.price <= 0) {
         throw new BadRequestException('Valid product price is required');
       }
-      if (!createProductDto.categoryId || createProductDto.categoryId.trim() === '') {
-        throw new BadRequestException('Category ID is required');
+
+      // Check for duplicate product name
+      const existingProductByName = await this.prisma.product.findFirst({
+        where: {
+          name: createProductDto.name,
+          isDeleted: false
+        }
+      });
+
+      if (existingProductByName) {
+        throw new ConflictException(`Product name "${createProductDto.name}" already exists`);
       }
 
       // Check if category exists
@@ -61,14 +102,11 @@ export class ProductsService {
       this.logger.log('Product created successfully', { id: product.id, name: product.name });
       return product;
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException || error instanceof ConflictException) {
         throw error;
       }
-      if (error.code === 'P2002') {
-        throw new ConflictException('Product with this name already exists');
-      }
-      if (error.code === 'P2003') {
-        throw new BadRequestException('Invalid category or vendor reference');
+      if (error.code && error.code.startsWith('P')) {
+        this.handlePrismaError(error, 'product creation', { name: createProductDto.name });
       }
       this.logger.error('Failed to create product', error.stack);
       throw new InternalServerErrorException('Failed to create product: ' + error.message);
@@ -132,6 +170,21 @@ export class ProductsService {
 
       this.logger.log('Updating product', { id, updateData: { name: updateProductDto.name } });
       const existingProduct = await this.findOne(id);
+      
+      // Check for duplicate product name if name is being updated
+      if (updateProductDto.name && updateProductDto.name !== existingProduct.name) {
+        const existingProductByName = await this.prisma.product.findFirst({
+          where: {
+            name: updateProductDto.name,
+            isDeleted: false,
+            id: { not: id } // Exclude current product
+          }
+        });
+
+        if (existingProductByName) {
+          throw new ConflictException(`Product name "${updateProductDto.name}" already exists`);
+        }
+      }
       
       // Validate category if being updated
       if (updateProductDto.categoryId) {
@@ -340,9 +393,48 @@ export class ProductsService {
     try {
       this.logger.log('Creating new product with tab-wise structure', { name: createProductMainDto.name });
 
-      // Validate required fields
+      // Validate required fields - name is still required for product creation
       if (!createProductMainDto.name || createProductMainDto.name.trim() === '') {
-        throw new BadRequestException('Product name is required');
+        this.logger.error('Product creation failed - name validation', { 
+          receivedName: createProductMainDto.name,
+          nameType: typeof createProductMainDto.name,
+          fullDto: JSON.stringify(createProductMainDto, null, 2)
+        });
+        throw new BadRequestException('Product name is required and cannot be empty');
+      }
+
+      // Additional validation for name length
+      if (createProductMainDto.name.length > 200) {
+        throw new BadRequestException('Product name must not exceed 200 characters');
+      }
+
+      // Validate short description length if provided
+      if (createProductMainDto.shortDescription && createProductMainDto.shortDescription.length > 500) {
+        throw new BadRequestException('Short description must not exceed 500 characters');
+      }
+
+      // Check for duplicate product name
+      const existingProductByName = await (this.prisma as any).productMain.findFirst({
+        where: {
+          name: createProductMainDto.name
+        }
+      });
+
+      if (existingProductByName) {
+        throw new ConflictException(`Product name "${createProductMainDto.name}" already exists`);
+      }
+
+      // Check for duplicate slug in basic tab if provided
+      if (createProductMainDto.basic?.slug) {
+        const existingProductBySlug = await (this.prisma as any).productBasic.findFirst({
+          where: {
+            slug: createProductMainDto.basic.slug
+          }
+        });
+
+        if (existingProductBySlug) {
+          throw new ConflictException(`Product slug "${createProductMainDto.basic.slug}" already exists`);
+        }
       }
 
       // Validate references if provided
@@ -378,8 +470,9 @@ export class ProductsService {
         const productMain = await (prisma as any).productMain.create({
           data: {
             name: createProductMainDto.name,
-            image: createProductMainDto.image,
             shortDescription: createProductMainDto.shortDescription,
+            price: createProductMainDto.price,
+            image: createProductMainDto.image,
             createdBy: createProductMainDto.createdBy,
             updatedBy: createProductMainDto.createdBy,
             // Initialize read-only fields
@@ -393,25 +486,71 @@ export class ProductsService {
         const childTabs = [];
 
         if (createProductMainDto.basic) {
+          // Map DTO fields to Prisma schema field names
+          const basicData = {
+            productId: productMain.id,
+            category: createProductMainDto.basic.categoryId, // Map categoryId to category
+            collection: createProductMainDto.basic.collectionId, // Map collectionId to collection
+            brand: createProductMainDto.basic.brand,
+            weight: createProductMainDto.basic.weight?.toString(),
+            gender: createProductMainDto.basic.gender,
+            size: createProductMainDto.basic.size,
+            colors: createProductMainDto.basic.colors ? JSON.stringify(createProductMainDto.basic.colors) : null,
+            colorName: createProductMainDto.basic.colorName,
+            description: createProductMainDto.basic.description,
+            tagNumber: createProductMainDto.basic.tagNumber,
+            stock: createProductMainDto.basic.stock?.toString(),
+            tags: createProductMainDto.basic.tags ? JSON.stringify(createProductMainDto.basic.tags) : null,
+            slug: createProductMainDto.basic.slug,
+            status: createProductMainDto.basic.status,
+            visibility: createProductMainDto.basic.visibility,
+            publishedAt: createProductMainDto.basic.publishedAt,
+            isSignaturePiece: createProductMainDto.basic.isSignaturePiece,
+            isFeatured: createProductMainDto.basic.isFeatured,
+            signatureLabel: createProductMainDto.basic.signatureLabel,
+            signatureStory: createProductMainDto.basic.signatureStory,
+            allowBackorder: createProductMainDto.basic.allowBackorder,
+            isPreorder: createProductMainDto.basic.isPreorder,
+            minOrderQty: createProductMainDto.basic.minOrderQty?.toString(),
+            maxOrderQty: createProductMainDto.basic.maxOrderQty?.toString(),
+            leadTimeDays: createProductMainDto.basic.leadTimeDays?.toString(),
+            hsCode: createProductMainDto.basic.hsCode,
+            warrantyInfo: createProductMainDto.basic.warrantyInfo,
+            badges: createProductMainDto.basic.badges ? JSON.stringify(createProductMainDto.basic.badges) : null,
+            sales: createProductMainDto.basic.sales?.toString(),
+            quantity: createProductMainDto.basic.quantity?.toString(),
+            reviewUi: createProductMainDto.basic.reviewUi,
+            soldUi: createProductMainDto.basic.soldUi,
+            createdBy: createProductMainDto.createdBy,
+            updatedBy: createProductMainDto.createdBy,
+          };
+
           const basic = await (prisma as any).productBasic.create({
-            data: {
-              productId: productMain.id,
-              ...createProductMainDto.basic,
-              createdBy: createProductMainDto.createdBy,
-              updatedBy: createProductMainDto.createdBy,
-            },
+            data: basicData,
           });
           childTabs.push({ basic });
         }
 
         if (createProductMainDto.pricing) {
+          // Map DTO fields to Prisma schema field names (all fields are String in schema)
+          const pricingData = {
+            productId: productMain.id,
+            price: createProductMainDto.pricing.price?.toString(),
+            priceUSD: createProductMainDto.pricing.priceUSD?.toString(),
+            currency: createProductMainDto.pricing.currency,
+            discount: createProductMainDto.pricing.discount?.toString(),
+            discountType: createProductMainDto.pricing.discountType,
+            compareAtPrice: createProductMainDto.pricing.compareAtPrice?.toString(),
+            saleStartAt: createProductMainDto.pricing.saleStartAt,
+            saleEndAt: createProductMainDto.pricing.saleEndAt,
+            discountLabel: createProductMainDto.pricing.discountLabel,
+            tax: createProductMainDto.pricing.tax?.toString(),
+            createdBy: createProductMainDto.createdBy,
+            updatedBy: createProductMainDto.createdBy,
+          };
+
           const pricing = await (prisma as any).productPricing.create({
-            data: {
-              productId: productMain.id,
-              ...createProductMainDto.pricing,
-              createdBy: createProductMainDto.createdBy,
-              updatedBy: createProductMainDto.createdBy,
-            },
+            data: pricingData,
           });
           childTabs.push({ pricing });
         }
@@ -420,7 +559,8 @@ export class ProductsService {
           const media = await (prisma as any).productMedia.create({
             data: {
               productId: productMain.id,
-              ...createProductMainDto.media,
+              images: createProductMainDto.media.images ? JSON.stringify(createProductMainDto.media.images) : null,
+              videoFile: createProductMainDto.media.videoFile,
               createdBy: createProductMainDto.createdBy,
               updatedBy: createProductMainDto.createdBy,
             },
@@ -432,7 +572,10 @@ export class ProductsService {
           const seo = await (prisma as any).productSeo.create({
             data: {
               productId: productMain.id,
-              ...createProductMainDto.seo,
+              seoTitle: createProductMainDto.seo.seoTitle,
+              seoDescription: createProductMainDto.seo.seoDescription,
+              canonicalUrl: createProductMainDto.seo.canonicalUrl,
+              ogImage: createProductMainDto.seo.ogImage,
               createdBy: createProductMainDto.createdBy,
               updatedBy: createProductMainDto.createdBy,
             },
@@ -446,7 +589,8 @@ export class ProductsService {
           const attributesTag = await (prisma as any).productAttributesTag.create({
             data: {
               productId: productMain.id,
-              ...createProductMainDto.attributesTag,
+              attributes: createProductMainDto.attributesTag.attributes,
+              tags: createProductMainDto.attributesTag.tags,
               createdBy: createProductMainDto.createdBy,
               updatedBy: createProductMainDto.createdBy,
             },
@@ -458,7 +602,7 @@ export class ProductsService {
           const variants = await (prisma as any).productVariants.create({
             data: {
               productId: productMain.id,
-              ...createProductMainDto.variants,
+              variants: createProductMainDto.variants.variants,
               createdBy: createProductMainDto.createdBy,
               updatedBy: createProductMainDto.createdBy,
             },
@@ -467,34 +611,98 @@ export class ProductsService {
         }
 
         if (createProductMainDto.inventory) {
+          // Map DTO fields to Prisma schema field names (all fields are String in schema)
+          const inventoryData = {
+            productId: productMain.id,
+            sku: createProductMainDto.inventory.sku,
+            barcode: createProductMainDto.inventory.barcode,
+            inventoryQuantity: createProductMainDto.inventory.inventoryQuantity?.toString(),
+            lowStockThreshold: createProductMainDto.inventory.lowStockThreshold?.toString(),
+            reorderPoint: createProductMainDto.inventory.reorderPoint?.toString(),
+            reorderQuantity: createProductMainDto.inventory.reorderQuantity?.toString(),
+            supplier: createProductMainDto.inventory.supplier,
+            supplierSku: createProductMainDto.inventory.supplierSku,
+            costPrice: createProductMainDto.inventory.costPrice?.toString(),
+            margin: createProductMainDto.inventory.margin?.toString(),
+            location: createProductMainDto.inventory.location,
+            warehouse: createProductMainDto.inventory.warehouse,
+            binLocation: createProductMainDto.inventory.binLocation,
+            lastRestocked: createProductMainDto.inventory.lastRestocked,
+            nextRestockDate: createProductMainDto.inventory.nextRestockDate,
+            inventoryStatus: createProductMainDto.inventory.inventoryStatus,
+            trackInventory: createProductMainDto.inventory.trackInventory,
+            reservedQuantity: createProductMainDto.inventory.reservedQuantity?.toString(),
+            availableQuantity: createProductMainDto.inventory.availableQuantity?.toString(),
+            createdBy: createProductMainDto.createdBy,
+            updatedBy: createProductMainDto.createdBy,
+          };
+
           const inventory = await (prisma as any).productInventory.create({
-            data: {
-              productId: productMain.id,
-              ...createProductMainDto.inventory,
-              createdBy: createProductMainDto.createdBy,
-              updatedBy: createProductMainDto.createdBy,
-            },
+            data: inventoryData,
           });
           childTabs.push({ inventory });
         }
 
         if (createProductMainDto.reels) {
+          // Map DTO fields to Prisma schema field names (all fields are String in schema)
+          const reelsData = {
+            productId: productMain.id,
+            platform: createProductMainDto.reels.platform,
+            reelTitle: createProductMainDto.reels.reelTitle,
+            reelDescription: createProductMainDto.reels.reelDescription,
+            reelLanguage: createProductMainDto.reels.reelLanguage,
+            captionsUrl: createProductMainDto.reels.captionsUrl,
+            thumbnailUrl: createProductMainDto.reels.thumbnailUrl,
+            durationSec: createProductMainDto.reels.durationSec?.toString(),
+            aspectRatio: createProductMainDto.reels.aspectRatio,
+            ctaUrl: createProductMainDto.reels.ctaUrl,
+            reelTags: createProductMainDto.reels.reelTags,
+            isPublic: createProductMainDto.reels.isPublic,
+            isPinned: createProductMainDto.reels.isPinned,
+            reelOrder: createProductMainDto.reels.reelOrder?.toString(),
+            createdBy: createProductMainDto.createdBy,
+            updatedBy: createProductMainDto.createdBy,
+          };
+
           const reels = await (prisma as any).productReels.create({
-            data: {
-              productId: productMain.id,
-              ...createProductMainDto.reels,
-              createdBy: createProductMainDto.createdBy,
-              updatedBy: createProductMainDto.createdBy,
-            },
+            data: reelsData,
           });
           childTabs.push({ reels });
         }
 
         if (createProductMainDto.itemDetails) {
+          // Parse trustBadges JSON and split into individual trust badge fields
+          let trustBadge1, trustBadge2, trustBadge3;
+          if (createProductMainDto.itemDetails.trustBadges) {
+            try {
+              const badges = JSON.parse(createProductMainDto.itemDetails.trustBadges);
+              if (Array.isArray(badges)) {
+                trustBadge1 = badges[0] ? JSON.stringify(badges[0]) : null;
+                trustBadge2 = badges[1] ? JSON.stringify(badges[1]) : null;
+                trustBadge3 = badges[2] ? JSON.stringify(badges[2]) : null;
+              }
+            } catch (error) {
+              // If parsing fails, treat as single badge
+              trustBadge1 = createProductMainDto.itemDetails.trustBadges;
+            }
+          }
+
           const itemDetails = await (prisma as any).productItemDetails.create({
             data: {
               productId: productMain.id,
-              ...createProductMainDto.itemDetails,
+              material: createProductMainDto.itemDetails.material,
+              warranty: createProductMainDto.itemDetails.warranty,
+              certification: createProductMainDto.itemDetails.certification,
+              vendorName: createProductMainDto.itemDetails.vendorName,
+              shippingFreeText: createProductMainDto.itemDetails.shippingFreeText,
+              qualityGuaranteeText: createProductMainDto.itemDetails.qualityGuaranteeText,
+              careInstructionsText: createProductMainDto.itemDetails.careInstructionsText,
+              didYouKnow: createProductMainDto.itemDetails.didYouKnow,
+              faqs: createProductMainDto.itemDetails.faqs,
+              sellerBlurb: createProductMainDto.itemDetails.sellerBlurb,
+              trustBadge1: trustBadge1,
+              trustBadge2: trustBadge2,
+              trustBadge3: trustBadge3,
               createdBy: createProductMainDto.createdBy,
               updatedBy: createProductMainDto.createdBy,
             },
@@ -503,13 +711,28 @@ export class ProductsService {
         }
 
         if (createProductMainDto.shippingPolicies) {
+          // Map DTO fields to Prisma schema field names (all fields are String in schema)
+          const shippingPoliciesData = {
+            productId: productMain.id,
+            shippingInfo: createProductMainDto.shippingPolicies.shippingInfo,
+            shippingNotes: createProductMainDto.shippingPolicies.shippingNotes,
+            packagingDetails: createProductMainDto.shippingPolicies.packagingDetails,
+            returnPolicy: createProductMainDto.shippingPolicies.returnPolicy,
+            returnWindowDays: createProductMainDto.shippingPolicies.returnWindowDays?.toString(),
+            returnFees: createProductMainDto.shippingPolicies.returnFees?.toString(),
+            isReturnable: createProductMainDto.shippingPolicies.isReturnable,
+            exchangePolicy: createProductMainDto.shippingPolicies.exchangePolicy,
+            warrantyPeriodMonths: createProductMainDto.shippingPolicies.warrantyPeriodMonths?.toString(),
+            warrantyType: createProductMainDto.shippingPolicies.warrantyType,
+            originCountry: createProductMainDto.shippingPolicies.originCountry,
+            weightKg: createProductMainDto.shippingPolicies.weightKg?.toString(),
+            dimensions: createProductMainDto.shippingPolicies.dimensions,
+            createdBy: createProductMainDto.createdBy,
+            updatedBy: createProductMainDto.createdBy,
+          };
+
           const shippingPolicies = await (prisma as any).productShippingPolicies.create({
-            data: {
-              productId: productMain.id,
-              ...createProductMainDto.shippingPolicies,
-              createdBy: createProductMainDto.createdBy,
-              updatedBy: createProductMainDto.createdBy,
-            },
+            data: shippingPoliciesData,
           });
           childTabs.push({ shippingPolicies });
         }
@@ -554,11 +777,144 @@ export class ProductsService {
 
       // Update based on tab name
       let result;
-      const updateData = {
+      let updateData = {
         ...updateChildDto.data,
         updatedBy: updateChildDto.updatedBy,
         updatedAt: new Date(),
       };
+
+      // Check for duplicate slug if updating basic tab with slug
+      if (updateChildDto.tabName === 'basic' && updateChildDto.data?.slug) {
+        const existingProductBySlug = await (this.prisma as any).productBasic.findFirst({
+          where: {
+            slug: updateChildDto.data.slug,
+            productId: { not: productId } // Exclude current product
+          }
+        });
+
+        if (existingProductBySlug) {
+          throw new ConflictException(`Product slug "${updateChildDto.data.slug}" already exists`);
+        }
+      }
+
+      // Map DTO fields to Prisma schema field names based on tab
+      if (updateChildDto.tabName === 'basic') {
+        const mappedData = {
+          ...updateChildDto.data,
+          category: updateChildDto.data?.categoryId, // Map categoryId to category
+          collection: updateChildDto.data?.collectionId, // Map collectionId to collection
+          weight: updateChildDto.data?.weight?.toString(),
+          stock: updateChildDto.data?.stock?.toString(),
+          minOrderQty: updateChildDto.data?.minOrderQty?.toString(),
+          maxOrderQty: updateChildDto.data?.maxOrderQty?.toString(),
+          leadTimeDays: updateChildDto.data?.leadTimeDays?.toString(),
+          sales: updateChildDto.data?.sales?.toString(),
+          quantity: updateChildDto.data?.quantity?.toString(),
+          // Convert array fields to JSON strings
+          colors: updateChildDto.data?.colors ? JSON.stringify(updateChildDto.data.colors) : undefined,
+          tags: updateChildDto.data?.tags ? JSON.stringify(updateChildDto.data.tags) : undefined,
+          badges: updateChildDto.data?.badges ? JSON.stringify(updateChildDto.data.badges) : undefined,
+          updatedBy: updateChildDto.updatedBy,
+          updatedAt: new Date(),
+        };
+        
+        // Remove the original field names that were mapped
+        delete mappedData.categoryId;
+        delete mappedData.collectionId;
+        
+        updateData = mappedData;
+      } else if (updateChildDto.tabName === 'media') {
+        const mappedData = {
+          ...updateChildDto.data,
+          // Convert array fields to JSON strings
+          images: updateChildDto.data?.images ? JSON.stringify(updateChildDto.data.images) : undefined,
+          updatedBy: updateChildDto.updatedBy,
+          updatedAt: new Date(),
+        };
+        
+        updateData = mappedData;
+      } else if (updateChildDto.tabName === 'pricing') {
+        const mappedData = {
+          ...updateChildDto.data,
+          price: updateChildDto.data?.price?.toString(),
+          priceUSD: updateChildDto.data?.priceUSD?.toString(),
+          discount: updateChildDto.data?.discount?.toString(),
+          compareAtPrice: updateChildDto.data?.compareAtPrice?.toString(),
+          tax: updateChildDto.data?.tax?.toString(),
+          updatedBy: updateChildDto.updatedBy,
+          updatedAt: new Date(),
+        };
+        
+        updateData = mappedData;
+      } else if (updateChildDto.tabName === 'inventory') {
+        const mappedData = {
+          ...updateChildDto.data,
+          inventoryQuantity: updateChildDto.data?.inventoryQuantity?.toString(),
+          lowStockThreshold: updateChildDto.data?.lowStockThreshold?.toString(),
+          reorderPoint: updateChildDto.data?.reorderPoint?.toString(),
+          reorderQuantity: updateChildDto.data?.reorderQuantity?.toString(),
+          costPrice: updateChildDto.data?.costPrice?.toString(),
+          margin: updateChildDto.data?.margin?.toString(),
+          reservedQuantity: updateChildDto.data?.reservedQuantity?.toString(),
+          availableQuantity: updateChildDto.data?.availableQuantity?.toString(),
+          updatedBy: updateChildDto.updatedBy,
+          updatedAt: new Date(),
+        };
+        
+        updateData = mappedData;
+      } else if (updateChildDto.tabName === 'reels') {
+        const mappedData = {
+          ...updateChildDto.data,
+          durationSec: updateChildDto.data?.durationSec?.toString(),
+          reelOrder: updateChildDto.data?.reelOrder?.toString(),
+          updatedBy: updateChildDto.updatedBy,
+          updatedAt: new Date(),
+        };
+        
+        updateData = mappedData;
+      } else if (updateChildDto.tabName === 'shippingPolicies') {
+        const mappedData = {
+          ...updateChildDto.data,
+          returnWindowDays: updateChildDto.data?.returnWindowDays?.toString(),
+          returnFees: updateChildDto.data?.returnFees?.toString(),
+          warrantyPeriodMonths: updateChildDto.data?.warrantyPeriodMonths?.toString(),
+          weightKg: updateChildDto.data?.weightKg?.toString(),
+          updatedBy: updateChildDto.updatedBy,
+          updatedAt: new Date(),
+        };
+        
+        updateData = mappedData;
+      } else if (updateChildDto.tabName === 'itemDetails') {
+        // Parse trustBadges JSON and split into individual trust badge fields
+        let trustBadge1, trustBadge2, trustBadge3;
+        if (updateChildDto.data?.trustBadges) {
+          try {
+            const badges = JSON.parse(updateChildDto.data.trustBadges);
+            if (Array.isArray(badges)) {
+              trustBadge1 = badges[0] ? JSON.stringify(badges[0]) : null;
+              trustBadge2 = badges[1] ? JSON.stringify(badges[1]) : null;
+              trustBadge3 = badges[2] ? JSON.stringify(badges[2]) : null;
+            }
+          } catch (error) {
+            // If parsing fails, treat as single badge
+            trustBadge1 = updateChildDto.data.trustBadges;
+          }
+        }
+
+        const mappedData = {
+          ...updateChildDto.data,
+          trustBadge1: trustBadge1,
+          trustBadge2: trustBadge2,
+          trustBadge3: trustBadge3,
+          updatedBy: updateChildDto.updatedBy,
+          updatedAt: new Date(),
+        };
+        
+        // Remove the original trustBadges field
+        delete mappedData.trustBadges;
+        
+        updateData = mappedData;
+      }
 
       switch (updateChildDto.tabName) {
         case 'basic':
@@ -714,8 +1070,12 @@ export class ProductsService {
         select: {
           id: true,
           name: true,
-          image: true,
           shortDescription: true,
+          price: true,
+          image: true,
+          rating: true,
+          reviewsCount: true,
+          views: true,
           createdAt: true,
           updatedAt: true,
           createdBy: true,

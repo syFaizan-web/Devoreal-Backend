@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsObject, IsArray, IsNumber, IsUUID, IsEnum, IsDateString, IsUrl, Min, Max, Length, IsInt, ValidateNested } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsObject, IsArray, IsNumber, IsUUID, IsEnum, IsDateString, IsUrl, Min, Max, Length, IsInt, ValidateNested, IsNotEmpty } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, ApiHideProperty } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 
@@ -78,10 +78,11 @@ export class BasicTabDto {
   @IsString()
   tags?: string;
 
-  @ApiPropertyOptional({ description: 'Product slug' })
+  @ApiPropertyOptional({ description: 'Product slug (URL-friendly format)' })
   @IsOptional()
   @IsString()
   @Length(1, 100, { message: 'Slug must be between 1 and 100 characters' })
+  @Transform(({ value }) => value ? value.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') : value)
   slug?: string;
 
   @ApiPropertyOptional({ description: 'Product status', enum: ['active', 'inactive', 'draft'] })
@@ -164,18 +165,13 @@ export class BasicTabDto {
 
   @ApiPropertyOptional({ description: 'Warranty information' })
   @IsOptional()
-  @IsString()
-  @Length(1, 500, { message: 'Warranty info must be between 1 and 500 characters' })
+  @IsString({ message: 'Warranty information must be a valid text string' })
+  @Length(1, 500, { message: 'Warranty information must be between 1 and 500 characters' })
   warrantyInfo?: string;
-
-  @ApiPropertyOptional({ description: 'Size guide URL' })
-  @IsOptional()
-  @IsUrl({}, { message: 'Size guide URL must be a valid URL' })
-  sizeGuideUrl?: string;
 
   @ApiPropertyOptional({ description: 'Product badges (JSON array)' })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'Product badges must be a valid JSON string' })
   badges?: string;
 
   // Removed rating, reviewsCount, views - these are now read-only in ProductMain
@@ -194,14 +190,10 @@ export class BasicTabDto {
   @Min(0, { message: 'Quantity must be non-negative' })
   quantity?: number;
 
-  @ApiPropertyOptional({ description: 'Review UI' })
-  @IsOptional()
-  @IsString()
+  @ApiHideProperty()
   reviewUi?: string;
 
-  @ApiPropertyOptional({ description: 'Sold UI' })
-  @IsOptional()
-  @IsString()
+  @ApiHideProperty()
   soldUi?: string;
 }
 
@@ -273,7 +265,15 @@ export class PricingTabDto {
 
 // Media Tab DTO
 export class MediaTabDto {
-  // Removed images field - images are now handled via file upload only
+  @ApiPropertyOptional({ description: 'Product images (JSON array of uploaded image paths)' })
+  @IsOptional()
+  @IsString({ message: 'Product images must be a valid JSON string' })
+  images?: string;
+
+  @ApiPropertyOptional({ description: 'Product video file path (uploaded via file upload)' })
+  @IsOptional()
+  @IsString({ message: 'Video file path must be a valid string' })
+  videoFile?: string;
 }
 
 // SEO Tab DTO
@@ -453,11 +453,6 @@ export class ReelsTabDto {
   @IsOptional()
   @IsEnum(['Instagram', 'TikTok', 'YouTube', 'Facebook', 'Upload'], { message: 'Platform must be Instagram, TikTok, YouTube, Facebook, or Upload' })
   platform?: string;
-
-  @ApiPropertyOptional({ description: 'Video file path' })
-  @IsOptional()
-  @IsString()
-  videoFile?: string;
 
   @ApiPropertyOptional({ description: 'Reel title' })
   @IsOptional()
@@ -673,21 +668,29 @@ export class ShippingPoliciesTabDto {
 }
 
 export class CreateProductMainDto {
-  @ApiProperty({ description: 'Product name' })
-  @IsString({ message: 'Product name must be a string' })
-  @Length(1, 200, { message: 'Product name must be between 1 and 200 characters' })
-  name: string;
-
-  @ApiPropertyOptional({ description: 'Main product image URL' })
+  @ApiPropertyOptional({ description: 'Product name' })
   @IsOptional()
-  @IsUrl({}, { message: 'Image must be a valid URL' })
-  image?: string;
+  @IsString({ message: 'Product name must be a valid text string' })
+  @Length(1, 200, { message: 'Product name must be between 1 and 200 characters' })
+  name?: string;
 
   @ApiPropertyOptional({ description: 'Short description for listing' })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'Short description must be a valid text string' })
   @Length(1, 500, { message: 'Short description must be between 1 and 500 characters' })
   shortDescription?: string;
+
+  @ApiPropertyOptional({ description: 'Product price' })
+  @IsOptional()
+  @Transform(({ value }) => parseFloat(value))
+  @IsNumber({}, { message: 'Price must be a number' })
+  @Min(0, { message: 'Price must be positive' })
+  price?: number;
+
+  @ApiPropertyOptional({ description: 'Main product image file path (uploaded via file upload)' })
+  @IsOptional()
+  @IsString({ message: 'Image file path must be a valid string' })
+  image?: string;
 
   // Read-only fields (managed by system)
   @ApiHideProperty()

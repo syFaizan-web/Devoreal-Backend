@@ -248,7 +248,7 @@ model SignaturePiece {
 }
 
 // Main Product Table - for main screen listing
-model ProductMain {
+model Product {
   id                String    @id @default(uuid())
   name              String
   image             String?    // Main product image
@@ -262,12 +262,22 @@ model ProductMain {
   createdBy         String?
   updatedBy         String?
 
+  // Status fields
+  isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false)
+  deletedAt         DateTime?
+  deletedBy         String?
+
+  // Additional fields for relations
+  vendorId          String?
+  categoryId        String?
+  storeId           String?
+
   // Relations to child tables
   basic             ProductBasic?
   pricing           ProductPricing?
   media             ProductMedia?
   seo               ProductSeo?
-  association       ProductAssociation?
   attributesTag     ProductAttributesTag?
   variants          ProductVariants?
   inventory         ProductInventory?
@@ -275,7 +285,19 @@ model ProductMain {
   itemDetails       ProductItemDetails?
   shippingPolicies  ProductShippingPolicies?
 
-  @@map("products_main")
+  // Relations to other models
+  vendor            VendorProfile? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  category          Category? @relation(fields: [categoryId], references: [id])
+  store             Store? @relation(fields: [storeId], references: [id])
+  orderItems        OrderItem[]
+  reviews           Review[]
+
+  @@index([isActive])
+  @@index([isDeleted])
+  @@index([vendorId])
+  @@index([categoryId])
+  @@index([storeId])
+  @@map("products")
 }
 
 // Basics Tab
@@ -330,7 +352,7 @@ model ProductBasic {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_basic")
 }
@@ -361,7 +383,7 @@ model ProductPricing {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_pricing")
 }
@@ -384,7 +406,7 @@ model ProductMedia {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_media")
 }
@@ -409,34 +431,11 @@ model ProductSeo {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_seo")
 }
 
-// Associations Tab
-model ProductAssociation {
-  id                String    @id @default(uuid())
-  productId         String    @unique
-  category          String?
-  collection        String?
-  brand             String?
-  
-  // Audit fields
-  isActive          Boolean   @default(true)
-  isDeleted         Boolean   @default(false)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  createdBy         String?
-  updatedBy         String?
-  deletedAt         DateTime?
-  deletedBy         String?
-
-  // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  @@map("product_association")
-}
 
 // Attributes & Tags Tab
 model ProductAttributesTag {
@@ -456,7 +455,7 @@ model ProductAttributesTag {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_attributes_tag")
 }
@@ -478,7 +477,7 @@ model ProductVariants {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_variants")
 }
@@ -518,7 +517,7 @@ model ProductInventory {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_inventory")
 }
@@ -552,7 +551,7 @@ model ProductReels {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_reels")
 }
@@ -586,7 +585,7 @@ model ProductItemDetails {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_item_details")
 }
@@ -620,50 +619,11 @@ model ProductShippingPolicies {
   deletedBy         String?
 
   // Relations
-  product           ProductMain @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_shipping_policies")
 }
 
-// Legacy Product model - keeping for backward compatibility
-model Product {
-  id                String    @id @default(uuid())
-  name              String
-  description       String?
-  price             Float
-  comparePrice      Float?
-  cost              Float?
-  sku               String    @unique
-  barcode           String?
-  stockQuantity     Int       @default(0)
-  minStockLevel     Int       @default(0)
-  isActive          Boolean   @default(true)
-  isDeleted         Boolean   @default(false)
-  isFeatured        Boolean   @default(false)
-  images            String?
-  weight            Float?
-  dimensions        String?
-  vendorId          String
-  categoryId        String?
-  tags              String?
-  attributes        String?
-  storeId           String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  createdBy         String?
-  updatedBy         String?
-  deletedAt         DateTime?
-  deletedBy         String?
-
-  // Relations
-  vendor            VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  category          Category? @relation(fields: [categoryId], references: [id])
-  store             Store? @relation(fields: [storeId], references: [id])
-  orderItems        OrderItem[]
-  reviews           Review[]
-
-  @@map("products")
-}
 
 // Order Management
 model Order {

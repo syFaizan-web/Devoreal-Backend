@@ -29,11 +29,12 @@ import { FastifyRequest } from 'fastify';
 import { MultipartFile } from '@fastify/multipart';
 import { ProductsService } from './products.service';
 import { FileUploadService } from '../../common/file-upload/file-upload.service';
-import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateProductMainDto } from './dto/create-product-main.dto';
-import { UpdateChildDto } from './dto/update-child.dto';
-import { ProductMainResponseDto, ProductFullResponseDto } from './dto/product-response.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+import { ProductResponseDto, ProductFullResponseDto } from './dto/product-response.dto';
+import { QueryProductDto } from './dto/query-product.dto';
+import { UpdateMainProductDto } from './dto/update-main-product.dto';
+import { SearchProductDto } from './dto/search-product.dto';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -57,7 +58,7 @@ export class ProductsController {
   @ApiResponse({
     status: 200,
     description: 'Products retrieved successfully',
-    type: [ProductMainResponseDto],
+    type: [ProductResponseDto],
   })
   @ApiResponse({
     status: 400,
@@ -122,6 +123,287 @@ export class ProductsController {
         throw error;
       }
       throw new InternalServerErrorException('Failed to fetch products: ' + error.message);
+    }
+  }
+
+  // ==================== FILTERING ENDPOINTS ====================
+
+  @Get('filter')
+  @Public()
+  @ApiOperation({ summary: 'Get products with advanced filtering options' })
+  @ApiResponse({
+    status: 200,
+    description: 'Filtered products retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        products: { type: 'array', items: { $ref: '#/components/schemas/ProductResponseDto' } },
+        pagination: {
+          type: 'object',
+          properties: {
+            page: { type: 'number' },
+            limit: { type: 'number' },
+            totalCount: { type: 'number' },
+            totalPages: { type: 'number' },
+            hasNextPage: { type: 'boolean' },
+            hasPrevPage: { type: 'boolean' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid query parameters',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async getProductsWithFilters(@Query() query: QueryProductDto) {
+    try {
+      this.logger.log('Fetching products with filters', { query });
+      const result = await this.productsService.getProductsWithFilters(query);
+      this.logger.log(`Successfully fetched ${result.products.length} filtered products`);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to fetch filtered products', error.stack, { query });
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch filtered products: ' + error.message);
+    }
+  }
+
+  @Get('search')
+  @Public()
+  @ApiOperation({ summary: 'Search products by name or description' })
+  @ApiQuery({ name: 'q', required: true, type: String, description: 'Search term' })
+  @ApiResponse({
+    status: 200,
+    description: 'Search results retrieved successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Search term required',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async searchProducts(@Query() query: SearchProductDto) {
+    try {
+      if (!query.q || query.q.trim() === '') {
+        throw new BadRequestException('Search term is required');
+      }
+
+      this.logger.log('Searching products', { searchTerm: query.q });
+      const result = await this.productsService.searchProducts(query.q, query);
+      this.logger.log(`Search completed: ${result.products.length} results found`);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to search products', error.stack, { searchTerm: query.q });
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to search products: ' + error.message);
+    }
+  }
+
+  @Get('category/:categoryId')
+  @Public()
+  @ApiOperation({ summary: 'Get products by category' })
+  @ApiParam({ name: 'categoryId', required: true, type: String, description: 'Category ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Products by category retrieved successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid category ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async getProductsByCategory(@Param('categoryId') categoryId: string, @Query() query: QueryProductDto) {
+    try {
+      if (!categoryId || categoryId.trim() === '') {
+        throw new BadRequestException('Category ID is required');
+      }
+
+      this.logger.log('Fetching products by category', { categoryId });
+      const result = await this.productsService.getProductsByCategory(categoryId, query);
+      this.logger.log(`Successfully fetched ${result.products.length} products for category ${categoryId}`);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to fetch products by category', error.stack, { categoryId });
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch products by category: ' + error.message);
+    }
+  }
+
+  @Get('collection/:collectionId')
+  @Public()
+  @ApiOperation({ summary: 'Get products by collection' })
+  @ApiParam({ name: 'collectionId', required: true, type: String, description: 'Collection ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Products by collection retrieved successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid collection ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async getProductsByCollection(@Param('collectionId') collectionId: string, @Query() query: QueryProductDto) {
+    try {
+      if (!collectionId || collectionId.trim() === '') {
+        throw new BadRequestException('Collection ID is required');
+      }
+
+      this.logger.log('Fetching products by collection', { collectionId });
+      const result = await this.productsService.getProductsByCollection(collectionId, query);
+      this.logger.log(`Successfully fetched ${result.products.length} products for collection ${collectionId}`);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to fetch products by collection', error.stack, { collectionId });
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch products by collection: ' + error.message);
+    }
+  }
+
+  @Get('signature-pieces')
+  @Public()
+  @ApiOperation({ summary: 'Get signature pieces' })
+  @ApiResponse({
+    status: 200,
+    description: 'Signature pieces retrieved successfully',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async getSignaturePieces(@Query() query: QueryProductDto) {
+    try {
+      this.logger.log('Fetching signature pieces');
+      const result = await this.productsService.getSignaturePieces(query);
+      this.logger.log(`Successfully fetched ${result.products.length} signature pieces`);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to fetch signature pieces', error.stack);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch signature pieces: ' + error.message);
+    }
+  }
+
+  @Get('tags/:tags')
+  @Public()
+  @ApiOperation({ summary: 'Get products by tags' })
+  @ApiParam({ name: 'tags', required: true, type: String, description: 'Comma-separated tags' })
+  @ApiResponse({
+    status: 200,
+    description: 'Products by tags retrieved successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid tags',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async getProductsByTags(@Param('tags') tags: string, @Query() query: QueryProductDto) {
+    try {
+      if (!tags || tags.trim() === '') {
+        throw new BadRequestException('Tags are required');
+      }
+
+      this.logger.log('Fetching products by tags', { tags });
+      const result = await this.productsService.getProductsByTags(tags, query);
+      this.logger.log(`Successfully fetched ${result.products.length} products for tags: ${tags}`);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to fetch products by tags', error.stack, { tags });
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch products by tags: ' + error.message);
+    }
+  }
+
+  @Get('price-range/:minPrice/:maxPrice')
+  @Public()
+  @ApiOperation({ summary: 'Get products by price range' })
+  @ApiParam({ name: 'minPrice', required: true, type: Number, description: 'Minimum price' })
+  @ApiParam({ name: 'maxPrice', required: true, type: Number, description: 'Maximum price' })
+  @ApiResponse({
+    status: 200,
+    description: 'Products by price range retrieved successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid price range',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async getProductsByPriceRange(
+    @Param('minPrice') minPrice: string, 
+    @Param('maxPrice') maxPrice: string, 
+    @Query() query: QueryProductDto
+  ) {
+    try {
+      const minPriceNum = parseFloat(minPrice);
+      const maxPriceNum = parseFloat(maxPrice);
+
+      if (isNaN(minPriceNum) || isNaN(maxPriceNum)) {
+        throw new BadRequestException('Invalid price values');
+      }
+
+      if (minPriceNum < 0 || maxPriceNum < 0) {
+        throw new BadRequestException('Price values must be non-negative');
+      }
+
+      if (minPriceNum > maxPriceNum) {
+        throw new BadRequestException('Minimum price cannot be greater than maximum price');
+      }
+
+      this.logger.log('Fetching products by price range', { minPrice: minPriceNum, maxPrice: maxPriceNum });
+      const result = await this.productsService.getProductsByPriceRange(minPriceNum, maxPriceNum, query);
+      this.logger.log(`Successfully fetched ${result.products.length} products in price range ${minPriceNum}-${maxPriceNum}`);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to fetch products by price range', error.stack, { minPrice, maxPrice });
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch products by price range: ' + error.message);
     }
   }
 
@@ -749,14 +1031,103 @@ export class ProductsController {
     }
   }
 
-  @Patch(':id/child')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Update a specific child tab of a product' })
+
+  @Patch('tab/:tabId')
+  @Public()
+  @ApiOperation({ summary: 'Update specific tab fields using tab ID (Public Access)' })
   @ApiConsumes('application/json')
-  @ApiBody({ type: UpdateChildDto })
+  @ApiBody({ 
+    schema: {
+      type: 'object',
+      properties: {
+        brand: { type: 'string' },
+        categoryId: { type: 'string' },
+        description: { type: 'string' },
+        price: { type: 'number' },
+        discount: { type: 'number' },
+        currency: { type: 'string' },
+        warranty: { type: 'string' },
+        material: { type: 'string' },
+        images: { type: 'array', items: { type: 'string' } },
+        videoFile: { type: 'string' },
+        seoTitle: { type: 'string' },
+        seoDescription: { type: 'string' }
+      }
+    },
+    description: 'Update data for specific tab using tab ID',
+    examples: {
+      'basicTab': {
+        summary: 'Update basic tab fields',
+        value: {
+          brand: 'Hurijewels',
+          categoryId: 'cat-123',
+          description: 'Luxury jewelry'
+        }
+      },
+      'pricingTab': {
+        summary: 'Update pricing tab fields',
+        value: {
+          price: 1500,
+          discount: 10,
+          currency: 'USD'
+        }
+      }
+    }
+  })
   @ApiResponse({
     status: 200,
-    description: 'Child tab updated successfully',
+    description: 'Tab updated successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Tab not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid tab data',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async updateTabById(@Param('tabId') tabId: string, @Body() updateData: any, @Req() req: FastifyRequest) {
+    try {
+      if (!tabId || tabId.trim() === '') {
+        throw new BadRequestException('Tab ID is required');
+      }
+
+      this.logger.log('Updating tab by ID', { tabId });
+      
+      const userId = (req as any).user?.id || 'public-user';
+      
+      const result = await this.productsService.updateTabById(tabId, updateData, userId);
+      
+      this.logger.log('Tab updated successfully by ID', { 
+        tabId,
+        updatedFields: Object.keys(updateData)
+      });
+      
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to update tab by ID', error.stack, { tabId });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update tab: ' + error.message);
+    }
+  }
+
+  @Patch('main/:id')
+  @Public()
+  @ApiOperation({ summary: 'Update main product fields using product ID (Public Access)' })
+  @ApiConsumes('application/json')
+  @ApiBody({ type: UpdateMainProductDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Main product updated successfully',
   })
   @ApiResponse({
     status: 404,
@@ -764,48 +1135,39 @@ export class ProductsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad request - Invalid tab name or data',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Authentication required',
+    description: 'Bad request - Invalid product data',
   })
   @ApiResponse({
     status: 500,
     description: 'Internal server error',
   })
-  async updateChild(@Param('id') id: string, @Body() updateChildDto: UpdateChildDto, @Req() req: FastifyRequest) {
+  async updateMainProduct(@Param('id') id: string, @Body() updateData: UpdateMainProductDto, @Req() req: FastifyRequest) {
     try {
       if (!id || id.trim() === '') {
         throw new BadRequestException('Product ID is required');
       }
 
-      this.logger.log('Updating child tab', { productId: id, tabName: updateChildDto.tabName });
+      this.logger.log('Updating main product', { productId: id });
       
-      const userId = (req as any).user?.id;
-      const updateData = {
-        ...updateChildDto,
-        updatedBy: userId,
-      };
+      const userId = (req as any).user?.id || 'public-user';
       
-      const result = await this.productsService.updateChild(id, updateData);
+      const result = await this.productsService.updateMainProductWithPriceSync(id, updateData, userId);
       
-      this.logger.log('Child tab updated successfully', { 
-        productId: id, 
-        tabName: updateChildDto.tabName,
-        tabId: result.id 
+      this.logger.log('Main product updated successfully', { 
+        productId: id,
+        updatedFields: Object.keys(updateData)
       });
       
       return result;
     } catch (error) {
-      this.logger.error('Failed to update child tab', error.stack, { productId: id, tabName: updateChildDto.tabName });
+      this.logger.error('Failed to update main product', error.stack, { productId: id });
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new InternalServerErrorException('Failed to update child tab: ' + error.message);
+      throw new InternalServerErrorException('Failed to update main product: ' + error.message);
     }
   }
 
@@ -1098,6 +1460,25 @@ export class ProductsController {
         throw error;
       }
       throw new BadRequestException('Failed to upload image: ' + error.message);
+    }
+  }
+
+  @Post('migrate/category-assignments')
+  @Public()
+  @ApiOperation({ summary: 'Migrate existing products to ensure proper category assignments' })
+  @ApiResponse({
+    status: 200,
+    description: 'Migration completed successfully',
+  })
+  async migrateCategoryAssignments() {
+    try {
+      this.logger.log('Starting category assignment migration');
+      const result = await this.productsService.migrateProductCategoryAssignments();
+      this.logger.log('Category assignment migration completed', result);
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to migrate category assignments', error.stack);
+      throw new InternalServerErrorException('Failed to migrate category assignments: ' + error.message);
     }
   }
 }

@@ -17,11 +17,11 @@ export enum SortOrder {
   DESC = 'desc'
 }
 
-export class QueryProductDto {
+export class SearchProductDto {
   @ApiPropertyOptional({ description: 'Search term for name or description' })
   @IsOptional()
   @IsString({ message: 'Search term must be a string' })
-  search?: string;
+  q?: string;
 
   @ApiPropertyOptional({ description: 'Filter by category ID' })
   @IsOptional()

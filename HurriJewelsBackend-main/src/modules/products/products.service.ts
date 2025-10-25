@@ -2,8 +2,8 @@ import { Injectable, NotFoundException, BadRequestException, ConflictException, 
 import { PrismaService } from '../../common/database/prisma.service';
 import { FileUploadService } from '../../common/file-upload/file-upload.service';
 import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateProductMainDto } from './dto/create-product-main.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateChildDto } from './dto/update-child.dto';
 
 @Injectable()
@@ -48,51 +48,59 @@ export class ProductsService {
     }
   }
 
-  async create(createProductDto: CreateProductDto) {
+  async create(createProductMainDto: CreateProductDto) {
     try {
-      this.logger.log('Creating new product', { name: createProductDto.name, categoryId: createProductDto.categoryId });
+      this.logger.log('Creating new product', { name: createProductMainDto.name, categoryId: createProductMainDto.categoryId });
       
       // Validate required fields using helper method
-      this.validateRequiredFields(createProductDto, ['name', 'categoryId'], 'product creation');
+      this.validateRequiredFields(createProductMainDto, ['name', 'categoryId'], 'product creation');
       
-      if (!createProductDto.price || createProductDto.price <= 0) {
+      if (!createProductMainDto.price || createProductMainDto.price <= 0) {
         throw new BadRequestException('Valid product price is required');
       }
 
       // Check for duplicate product name
       const existingProductByName = await this.prisma.product.findFirst({
         where: {
-          name: createProductDto.name,
-          isDeleted: false
+          name: createProductMainDto.name
         }
       });
 
       if (existingProductByName) {
-        throw new ConflictException(`Product name "${createProductDto.name}" already exists`);
+        throw new ConflictException(`Product name "${createProductMainDto.name}" already exists`);
       }
 
       // Check if category exists
       const category = await this.prisma.category.findFirst({
-        where: { id: createProductDto.categoryId, isDeleted: false }
+        where: { id: createProductMainDto.categoryId }
       });
       if (!category) {
-        this.logger.warn('Product creation failed - category not found', { categoryId: createProductDto.categoryId });
+        this.logger.warn('Product creation failed - category not found', { categoryId: createProductMainDto.categoryId });
         throw new NotFoundException('Category not found');
       }
 
       // Check if vendor exists (if provided)
-      if (createProductDto.vendorId) {
+      if (createProductMainDto.vendorId) {
         const vendor = await this.prisma.vendorProfile.findFirst({
-          where: { id: createProductDto.vendorId, isActive: true }
+          where: { id: createProductMainDto.vendorId, isActive: true }
         });
         if (!vendor) {
-          this.logger.warn('Product creation failed - vendor not found or inactive', { vendorId: createProductDto.vendorId });
+          this.logger.warn('Product creation failed - vendor not found or inactive', { vendorId: createProductMainDto.vendorId });
           throw new NotFoundException('Vendor not found or inactive');
         }
       }
 
       const product = await this.prisma.product.create({
-        data: createProductDto as any,
+        data: {
+          name: createProductMainDto.name,
+          shortDescription: createProductMainDto.description,
+          price: createProductMainDto.price,
+          image: createProductMainDto.images,
+          vendorId: createProductMainDto.vendorId,
+          categoryId: createProductMainDto.categoryId,
+          createdBy: createProductMainDto.createdBy,
+          updatedBy: createProductMainDto.createdBy,
+        } as any,
         include: {
           vendor: true,
           category: true,
@@ -106,7 +114,7 @@ export class ProductsService {
         throw error;
       }
       if (error.code && error.code.startsWith('P')) {
-        this.handlePrismaError(error, 'product creation', { name: createProductDto.name });
+        this.handlePrismaError(error, 'product creation', { name: createProductMainDto.name });
       }
       this.logger.error('Failed to create product', error.stack);
       throw new InternalServerErrorException('Failed to create product: ' + error.message);
@@ -117,7 +125,7 @@ export class ProductsService {
     try {
       this.logger.debug('Fetching all products');
       const products = await this.prisma.product.findMany({
-        where: { isDeleted: false } as any,
+        where: {} as any, // Remove isDeleted filter since new Product model doesn't have this field
         include: {
           vendor: true,
           category: true,
@@ -139,7 +147,7 @@ export class ProductsService {
 
       this.logger.debug('Fetching product by ID', { id });
       const product = await this.prisma.product.findFirst({
-        where: { id, isDeleted: false } as any,
+        where: { id } as any,
         include: {
           vendor: true,
           category: true,
@@ -176,7 +184,6 @@ export class ProductsService {
         const existingProductByName = await this.prisma.product.findFirst({
           where: {
             name: updateProductDto.name,
-            isDeleted: false,
             id: { not: id } // Exclude current product
           }
         });
@@ -189,7 +196,7 @@ export class ProductsService {
       // Validate category if being updated
       if (updateProductDto.categoryId) {
         const category = await this.prisma.category.findFirst({
-          where: { id: updateProductDto.categoryId, isDeleted: false }
+          where: { id: updateProductDto.categoryId }
         });
         if (!category) {
           throw new NotFoundException('Category not found');
@@ -207,10 +214,10 @@ export class ProductsService {
       }
       
       // If updating with new images, delete the old images
-      if (updateProductDto.images && existingProduct.images && updateProductDto.images !== existingProduct.images) {
+      if (updateProductDto.images && (existingProduct as any).image && updateProductDto.images !== (existingProduct as any).image) {
         try {
           // Parse the old images JSON string to get array of image paths
-          const oldImagePaths = JSON.parse(existingProduct.images);
+          const oldImagePaths = JSON.parse((existingProduct as any).image);
           if (Array.isArray(oldImagePaths)) {
             for (const imagePath of oldImagePaths) {
               try {
@@ -222,17 +229,17 @@ export class ProductsService {
           } else {
             // If it's not an array, treat as single image
             try {
-              await this.fileUploadService.deleteFile(existingProduct.images);
+              await this.fileUploadService.deleteFile((existingProduct as any).image);
             } catch (error) {
-              this.logger.warn('Failed to delete old product image', { error: error.message, image: existingProduct.images });
+              this.logger.warn('Failed to delete old product image', { error: error.message, image: (existingProduct as any).image });
             }
           }
         } catch (error) {
           // If old images is not valid JSON, treat as single image path
           try {
-            await this.fileUploadService.deleteFile(existingProduct.images);
+            await this.fileUploadService.deleteFile((existingProduct as any).image);
           } catch (deleteError) {
-            this.logger.warn('Failed to delete old product image', { error: deleteError.message, image: existingProduct.images });
+            this.logger.warn('Failed to delete old product image', { error: deleteError.message, image: (existingProduct as any).image });
           }
         }
       }
@@ -273,10 +280,10 @@ export class ProductsService {
       const existingProduct = await this.findOne(id);
       
       // Delete the product images if they exist
-      if (existingProduct.images) {
+      if ((existingProduct as any).image) {
         try {
           // Parse the images JSON string to get array of image paths
-          const imagePaths = JSON.parse(existingProduct.images);
+          const imagePaths = JSON.parse((existingProduct as any).image);
           if (Array.isArray(imagePaths)) {
             for (const imagePath of imagePaths) {
               try {
@@ -289,9 +296,9 @@ export class ProductsService {
         } catch (error) {
           // If images is not a valid JSON array, treat it as a single image path
           try {
-            await this.fileUploadService.deleteFile(existingProduct.images);
+            await this.fileUploadService.deleteFile((existingProduct as any).image);
           } catch (deleteError) {
-            this.logger.warn('Failed to delete product image', { error: deleteError.message, image: existingProduct.images });
+            this.logger.warn('Failed to delete product image', { error: deleteError.message, image: (existingProduct as any).image });
           }
         }
       }
@@ -324,10 +331,16 @@ export class ProductsService {
         throw new BadRequestException('Product ID is required');
       }
 
-      await this.findOne(id);
+      const product = await this.findOne(id);
+      
+      // Check if product is already soft-deleted (new Product model doesn't have isDeleted field)
+      // if (product.isDeleted) {
+      //   throw new BadRequestException('Product is already deleted');
+      // }
+
       await this.prisma.product.update({
         where: { id },
-        data: { isDeleted: true, deletedAt: new Date(), deletedBy: userId } as any,
+        data: { deletedAt: new Date(), deletedBy: userId } as any, // New Product model doesn't have isDeleted field
       });
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
@@ -346,10 +359,27 @@ export class ProductsService {
         throw new BadRequestException('Product ID is required');
       }
 
-      await this.findOne(id);
+      // Check if product exists (including soft-deleted ones)
+      const product = await this.prisma.product.findFirst({
+        where: { id } as any,
+        include: {
+          vendor: true,
+          category: true,
+        },
+      });
+
+      if (!product) {
+        throw new NotFoundException(`Product with ID ${id} not found`);
+      }
+
+      // Check if product is already restored (new Product model doesn't have isDeleted field)
+      // if (!product.isDeleted) {
+      //   throw new BadRequestException('Product is not deleted, cannot restore');
+      // }
+
       await this.prisma.product.update({
         where: { id },
-        data: { isDeleted: false, deletedAt: null, deletedBy: null, updatedBy: userId } as any,
+        data: { deletedAt: null, deletedBy: null, updatedBy: userId } as any,
       });
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
@@ -371,7 +401,7 @@ export class ProductsService {
       const product = await this.findOne(id);
       await this.prisma.product.update({
         where: { id },
-        data: { isActive: !product.isActive, updatedBy: userId } as any,
+        data: { updatedBy: userId } as any, // New Product model doesn't have isActive field
       });
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
@@ -414,7 +444,7 @@ export class ProductsService {
       }
 
       // Check for duplicate product name
-      const existingProductByName = await (this.prisma as any).productMain.findFirst({
+      const existingProductByName = await this.prisma.product.findFirst({
         where: {
           name: createProductMainDto.name
         }
@@ -440,7 +470,7 @@ export class ProductsService {
       // Validate references if provided
       if (createProductMainDto.basic?.categoryId) {
         const category = await this.prisma.category.findFirst({
-          where: { id: createProductMainDto.basic.categoryId, isDeleted: false }
+          where: { id: createProductMainDto.basic.categoryId }
         });
         if (!category) {
           throw new NotFoundException('Category not found');
@@ -449,7 +479,7 @@ export class ProductsService {
 
       if (createProductMainDto.basic?.collectionId) {
         const collection = await this.prisma.collection.findFirst({
-          where: { id: createProductMainDto.basic.collectionId, isDeleted: false }
+          where: { id: createProductMainDto.basic.collectionId }
         });
         if (!collection) {
           throw new NotFoundException('Collection not found');
@@ -458,7 +488,7 @@ export class ProductsService {
 
       if (createProductMainDto.basic?.signaturePieceId) {
         const signaturePiece = await this.prisma.signaturePiece.findFirst({
-          where: { id: createProductMainDto.basic.signaturePieceId, isDeleted: false }
+          where: { id: createProductMainDto.basic.signaturePieceId }
         });
         if (!signaturePiece) {
           throw new NotFoundException('Signature piece not found');
@@ -467,7 +497,7 @@ export class ProductsService {
 
       const result = await this.prisma.$transaction(async (prisma) => {
         // Create main product with read-only fields initialized
-        const productMain = await (prisma as any).productMain.create({
+        const productMain = await prisma.product.create({
           data: {
             name: createProductMainDto.name,
             shortDescription: createProductMainDto.shortDescription,
@@ -475,11 +505,13 @@ export class ProductsService {
             image: createProductMainDto.image,
             createdBy: createProductMainDto.createdBy,
             updatedBy: createProductMainDto.createdBy,
+            // Assign category ID from basic data
+            categoryId: createProductMainDto.basic?.categoryId || null,
             // Initialize read-only fields
             rating: 0,
             reviewsCount: 0,
             views: 0,
-          },
+          } as any,
         });
 
         // Create child tabs if data provided
@@ -760,16 +792,202 @@ export class ProductsService {
   }
 
   /**
+   * Migrate a legacy product to the new tab-based structure
+   */
+  async migrateLegacyProduct(legacyProductId: string, createdBy: string = 'migration') {
+    try {
+      this.logger.log('Migrating legacy product to tab-based structure', { legacyProductId });
+
+      // Get the product (now using the unified products table)
+      const product = await this.prisma.product.findFirst({
+        where: { id: legacyProductId },
+        include: {
+          vendor: true,
+          category: true,
+        },
+      });
+
+      if (!product) {
+        throw new NotFoundException(`Product with ID ${legacyProductId} not found`);
+      }
+
+      // Check if already migrated
+      const existingProductMain = await this.prisma.product.findFirst({
+        where: { name: product.name }
+      });
+
+      if (existingProductMain) {
+        throw new ConflictException(`Product "${product.name}" already exists in tab-based structure`);
+      }
+
+      // Create new tab-based product
+      const result = await this.prisma.$transaction(async (prisma) => {
+        // Create main product
+        const productMain = await prisma.product.create({
+          data: {
+            name: product.name,
+            shortDescription: (product as any).shortDescription || '',
+            price: product.price,
+            image: (product as any).image || '',
+            createdBy,
+            updatedBy: createdBy,
+            rating: 0,
+            reviewsCount: 0,
+            views: 0,
+          } as any,
+        });
+
+        // Create basic tab with legacy data
+        const basicData = {
+          productId: productMain.id,
+          category: product.categoryId,
+          brand: '', // Not available in legacy
+          weight: null, // Not available in new Product model
+          gender: '', // Not available in legacy
+          size: '', // Not available in legacy
+          colors: null, // Not available in new Product model
+          colorName: '', // Not available in legacy
+          description: (product as any).shortDescription,
+          tagNumber: '', // Not available in legacy
+          stock: null, // Not available in new Product model
+          tags: null, // Not available in new Product model
+          slug: '', // Not available in legacy
+          status: 'ACTIVE',
+          visibility: 'PUBLIC',
+          publishedAt: product.createdAt?.toISOString(),
+          isSignaturePiece: false,
+          isFeatured: false, // Not available in new Product model
+          signatureLabel: '', // Not available in legacy
+          signatureStory: '', // Not available in legacy
+          allowBackorder: false,
+          isPreorder: false,
+          minOrderQty: null, // Not available in new Product model
+          maxOrderQty: '', // Not available in legacy
+          leadTimeDays: '', // Not available in legacy
+          hsCode: '', // Not available in legacy
+          warrantyInfo: '', // Not available in legacy
+          badges: null,
+          sales: '0',
+          quantity: null, // Not available in new Product model
+          reviewUi: '', // Not available in legacy
+          soldUi: '', // Not available in legacy
+          createdBy,
+          updatedBy: createdBy,
+        };
+
+        const basic = await (prisma as any).productBasic.create({
+          data: basicData,
+        });
+
+        // Create pricing tab
+        const pricingData = {
+          productId: productMain.id,
+          price: product.price?.toString(),
+          priceUSD: product.price?.toString(),
+          currency: 'USD',
+          discount: '0',
+          discountType: 'PERCENTAGE',
+          compareAtPrice: null, // Not available in new Product model
+          saleStartAt: null,
+          saleEndAt: null,
+          discountLabel: '',
+          tax: '0',
+          createdBy,
+          updatedBy: createdBy,
+        };
+
+        const pricing = await (prisma as any).productPricing.create({
+          data: pricingData,
+        });
+
+        // Create media tab
+        const mediaData = {
+          productId: productMain.id,
+          images: (product as any).image,
+          videoFile: null,
+          createdBy,
+          updatedBy: createdBy,
+        };
+
+        const media = await (prisma as any).productMedia.create({
+          data: mediaData,
+        });
+
+        // Create inventory tab
+        const inventoryData = {
+          productId: productMain.id,
+          sku: null, // Not available in new Product model
+          barcode: null, // Not available in new Product model
+          inventoryQuantity: null, // Not available in new Product model
+          lowStockThreshold: null, // Not available in new Product model
+          reorderPoint: null, // Not available in new Product model
+          reorderQuantity: '10',
+          supplier: '', // Not available in legacy
+          supplierSku: '', // Not available in legacy
+          costPrice: null, // Not available in new Product model
+          margin: '', // Not available in legacy
+          location: '', // Not available in legacy
+          warehouse: '', // Not available in legacy
+          binLocation: '', // Not available in legacy
+          lastRestocked: null,
+          nextRestockDate: null,
+          inventoryStatus: 'IN_STOCK',
+          trackInventory: true,
+          reservedQuantity: '0',
+          availableQuantity: null, // Not available in new Product model
+          createdBy,
+          updatedBy: createdBy,
+        };
+
+        const inventory = await (prisma as any).productInventory.create({
+          data: inventoryData,
+        });
+
+        return { productMain, basic, pricing, media, inventory };
+      });
+
+      this.logger.log('Legacy product migrated successfully', { 
+        legacyProductId, 
+        newProductId: result.productMain.id,
+        productName: result.productMain.name 
+      });
+
+      return result;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ConflictException) {
+        throw error;
+      }
+      this.logger.error('Failed to migrate legacy product', error.stack, { legacyProductId });
+      throw new InternalServerErrorException('Failed to migrate legacy product: ' + error.message);
+    }
+  }
+
+  /**
    * Update a specific child tab
    */
   async updateChild(productId: string, updateChildDto: UpdateChildDto) {
     try {
       this.logger.log('Updating child tab', { productId, tabName: updateChildDto.tabName });
 
-      // Validate product exists
-      const product = await (this.prisma as any).productMain.findUnique({
+      // Check if product exists in new tab-based structure (productMain)
+      let product = await this.prisma.product.findUnique({
         where: { id: productId },
       });
+
+      let isLegacyProduct = false;
+      
+      // If not found in productMain, check legacy products table
+      if (!product) {
+        product = await this.prisma.product.findFirst({
+          where: { id: productId },
+        });
+        
+        if (product) {
+          isLegacyProduct = true;
+          this.logger.log('Product found in legacy table, tab updates not supported for legacy products', { productId });
+          throw new BadRequestException('Tab updates are only supported for products created with the new tab-based structure. Legacy products need to be migrated first.');
+        }
+      }
 
       if (!product) {
         throw new NotFoundException(`Product with ID ${productId} not found`);
@@ -1060,13 +1278,276 @@ export class ProductsService {
   }
 
   /**
+   * Update specific tab by tab ID
+   */
+  async updateTabById(tabId: string, updateData: any, updatedBy: string) {
+    try {
+      this.logger.log('Updating tab by ID', { tabId });
+
+      // Add update metadata
+      const dataWithMetadata = {
+        ...updateData,
+        updatedBy,
+        updatedAt: new Date(),
+      };
+
+      // Field to table mapping
+      const fieldToTableMap = {
+        // Basic tab fields
+        'brand': 'productBasic',
+        'categoryId': 'productBasic',
+        'collectionId': 'productBasic',
+        'signaturePieceId': 'productBasic',
+        'weight': 'productBasic',
+        'gender': 'productBasic',
+        'size': 'productBasic',
+        'colors': 'productBasic',
+        'colorName': 'productBasic',
+        'description': 'productBasic',
+        'tagNumber': 'productBasic',
+        'stock': 'productBasic',
+        'tags': 'productBasic',
+        'slug': 'productBasic',
+        'status': 'productBasic',
+        'visibility': 'productBasic',
+        'publishedAt': 'productBasic',
+        'isSignaturePiece': 'productBasic',
+        'isFeatured': 'productBasic',
+        'signatureLabel': 'productBasic',
+        'signatureStory': 'productBasic',
+        'allowBackorder': 'productBasic',
+        'isPreorder': 'productBasic',
+        'minOrderQty': 'productBasic',
+        'maxOrderQty': 'productBasic',
+        'leadTimeDays': 'productBasic',
+        'hsCode': 'productBasic',
+        'warrantyInfo': 'productBasic',
+        'badges': 'productBasic',
+        'sales': 'productBasic',
+        'quantity': 'productBasic',
+        'reviewUi': 'productBasic',
+        'soldUi': 'productBasic',
+
+        // Pricing tab fields
+        'price': 'productPricing',
+        'priceUSD': 'productPricing',
+        'currency': 'productPricing',
+        'discount': 'productPricing',
+        'discountType': 'productPricing',
+        'compareAtPrice': 'productPricing',
+        'saleStartAt': 'productPricing',
+        'saleEndAt': 'productPricing',
+        'discountLabel': 'productPricing',
+        'tax': 'productPricing',
+
+        // Media tab fields
+        'images': 'productMedia',
+        'videoFile': 'productMedia',
+
+        // SEO tab fields
+        'seoTitle': 'productSeo',
+        'seoDescription': 'productSeo',
+        'canonicalUrl': 'productSeo',
+        'ogImage': 'productSeo',
+
+        // Attributes & Tags tab fields
+        'attributes': 'productAttributesTag',
+
+        // Variants tab fields
+        'variants': 'productVariants',
+
+        // Inventory tab fields
+        'sku': 'productInventory',
+        'barcode': 'productInventory',
+        'inventoryQuantity': 'productInventory',
+        'lowStockThreshold': 'productInventory',
+        'reorderPoint': 'productInventory',
+        'reorderQuantity': 'productInventory',
+        'supplier': 'productInventory',
+        'supplierSku': 'productInventory',
+        'costPrice': 'productInventory',
+        'margin': 'productInventory',
+        'location': 'productInventory',
+        'warehouse': 'productInventory',
+        'binLocation': 'productInventory',
+        'lastRestocked': 'productInventory',
+        'nextRestockDate': 'productInventory',
+        'inventoryStatus': 'productInventory',
+        'trackInventory': 'productInventory',
+        'reservedQuantity': 'productInventory',
+        'availableQuantity': 'productInventory',
+
+        // Reels tab fields
+        'platform': 'productReels',
+        'reelTitle': 'productReels',
+        'reelDescription': 'productReels',
+        'reelLanguage': 'productReels',
+        'captionsUrl': 'productReels',
+        'thumbnailUrl': 'productReels',
+        'durationSec': 'productReels',
+        'aspectRatio': 'productReels',
+        'ctaUrl': 'productReels',
+        'reelTags': 'productReels',
+        'isPublic': 'productReels',
+        'isPinned': 'productReels',
+        'reelOrder': 'productReels',
+
+        // Item Details tab fields
+        'material': 'productItemDetails',
+        'warranty': 'productItemDetails',
+        'certification': 'productItemDetails',
+        'vendorName': 'productItemDetails',
+        'shippingFreeText': 'productItemDetails',
+        'qualityGuaranteeText': 'productItemDetails',
+        'careInstructionsText': 'productItemDetails',
+        'didYouKnow': 'productItemDetails',
+        'faqs': 'productItemDetails',
+        'sellerBlurb': 'productItemDetails',
+        'trustBadges': 'productItemDetails',
+
+        // Shipping & Policies tab fields
+        'shippingInfo': 'productShippingPolicies',
+        'shippingNotes': 'productShippingPolicies',
+        'packagingDetails': 'productShippingPolicies',
+        'returnPolicy': 'productShippingPolicies',
+        'returnWindowDays': 'productShippingPolicies',
+        'returnFees': 'productShippingPolicies',
+        'isReturnable': 'productShippingPolicies',
+        'exchangePolicy': 'productShippingPolicies',
+        'warrantyPeriodMonths': 'productShippingPolicies',
+        'warrantyType': 'productShippingPolicies',
+        'originCountry': 'productShippingPolicies',
+        'weightKg': 'productShippingPolicies',
+        'dimensions': 'productShippingPolicies'
+      };
+
+      // Determine which table to update based on the fields provided
+      const fieldsToUpdate = Object.keys(updateData);
+      const tableNames = new Set();
+      
+      fieldsToUpdate.forEach(field => {
+        const tableName = fieldToTableMap[field];
+        if (tableName) {
+          tableNames.add(tableName);
+        }
+      });
+
+      // If no specific table found, try all tables (fallback)
+      if (tableNames.size === 0) {
+        const tabTables = [
+          'productBasic',
+          'productPricing', 
+          'productMedia',
+          'productSeo',
+          'productAttributesTag',
+          'productVariants',
+          'productInventory',
+          'productReels',
+          'productItemDetails',
+          'productShippingPolicies'
+        ];
+
+        for (const tableName of tabTables) {
+          try {
+            const result = await (this.prisma as any)[tableName as string].update({
+              where: { id: tabId },
+              data: dataWithMetadata,
+            });
+            
+            this.logger.log('Tab updated successfully by ID (fallback)', { tabId, tableName });
+            return result;
+          } catch (error) {
+            // Continue to next table if this one doesn't have the record
+            if (error.code === 'P2025') { // Record not found
+              continue;
+            }
+            throw error;
+          }
+        }
+      } else {
+        // Update specific table(s) based on field mapping
+        for (const tableName of Array.from(tableNames)) {
+          try {
+            // Filter data to only include fields that belong to this table
+            const filteredData = {};
+            fieldsToUpdate.forEach(field => {
+              if (fieldToTableMap[field] === tableName) {
+                filteredData[field] = dataWithMetadata[field];
+              }
+            });
+
+            // Add metadata
+            filteredData['updatedBy'] = updatedBy;
+            filteredData['updatedAt'] = new Date();
+
+            const result = await (this.prisma as any)[tableName as string].update({
+              where: { id: tabId },
+              data: filteredData,
+            });
+            
+            this.logger.log('Tab updated successfully by ID', { tabId, tableName, fields: Object.keys(filteredData) });
+            return result;
+          } catch (error) {
+            if (error.code === 'P2025') { // Record not found
+              continue;
+            }
+            throw error;
+          }
+        }
+      }
+
+      throw new NotFoundException(`Tab with ID ${tabId} not found`);
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('Failed to update tab by ID', error.stack, { tabId });
+      throw new InternalServerErrorException('Failed to update tab: ' + error.message);
+    }
+  }
+
+  /**
+   * Update main product by product ID
+   */
+  async updateMainProduct(productId: string, updateData: any, updatedBy: string) {
+    try {
+      this.logger.log('Updating main product', { productId });
+
+      // Add update metadata
+      const dataWithMetadata = {
+        ...updateData,
+        updatedBy,
+        updatedAt: new Date(),
+      };
+
+      // Update main product table
+      const result = await this.prisma.product.update({
+        where: { id: productId },
+        data: dataWithMetadata,
+      });
+
+      this.logger.log('Main product updated successfully', { productId });
+      return result;
+    } catch (error) {
+      if (error.code === 'P2025') {
+        throw new NotFoundException(`Product with ID ${productId} not found`);
+      }
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('Failed to update main product', error.stack, { productId });
+      throw new InternalServerErrorException('Failed to update main product: ' + error.message);
+    }
+  }
+
+  /**
    * Get all products for main screen (selective fields only)
    */
   async getAllProducts() {
     try {
       this.logger.debug('Fetching all products for main screen');
       
-      const products = await (this.prisma as any).productMain.findMany({
+      const products = await this.prisma.product.findMany({
         select: {
           id: true,
           name: true,
@@ -1080,7 +1561,7 @@ export class ProductsService {
           updatedAt: true,
           createdBy: true,
           updatedBy: true,
-        },
+        } as any,
         orderBy: {
           createdAt: 'desc',
         },
@@ -1095,6 +1576,134 @@ export class ProductsService {
   }
 
   /**
+   * Get specific tab data for a product
+   */
+  async getProductTab(productId: string, tabName: string) {
+    try {
+      if (!productId || productId.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      if (!tabName || tabName.trim() === '') {
+        throw new BadRequestException('Tab name is required');
+      }
+
+      // Validate tab name
+      const validTabs = ['basic', 'pricing', 'media', 'seo', 'attributesTag', 'variants', 'inventory', 'reels', 'itemDetails', 'shippingPolicies'];
+      if (!validTabs.includes(tabName)) {
+        throw new BadRequestException(`Invalid tab name: ${tabName}. Valid tabs are: ${validTabs.join(', ')}`);
+      }
+
+      this.logger.debug('Fetching product tab data', { productId, tabName });
+
+      // Check if product exists in new tab-based structure (productMain)
+      let product = await this.prisma.product.findUnique({
+        where: { id: productId },
+        select: { id: true, name: true }
+      });
+
+      let isLegacyProduct = false;
+      
+      // If not found in productMain, check legacy products table
+      if (!product) {
+        product = await this.prisma.product.findFirst({
+          where: { id: productId },
+          select: { id: true, name: true }
+        });
+        
+        if (product) {
+          isLegacyProduct = true;
+          this.logger.log('Product found in legacy table, converting to tab format', { productId });
+        }
+      }
+
+      if (!product) {
+        this.logger.warn('Product not found in both new and legacy tables', { productId });
+        throw new NotFoundException(`Product with ID ${productId} not found`);
+      }
+
+      // Get the specific tab data
+      let tabData;
+      
+      if (isLegacyProduct) {
+        // For legacy products, return null or empty data since they don't have tab structure
+        this.logger.log('Legacy product has no tab structure', { productId, tabName });
+        return null;
+      }
+      
+      switch (tabName) {
+        case 'basic':
+          tabData = await (this.prisma as any).productBasic.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'pricing':
+          tabData = await (this.prisma as any).productPricing.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'media':
+          tabData = await (this.prisma as any).productMedia.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'seo':
+          tabData = await (this.prisma as any).productSeo.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'attributesTag':
+          tabData = await (this.prisma as any).productAttributesTag.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'variants':
+          tabData = await (this.prisma as any).productVariants.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'inventory':
+          tabData = await (this.prisma as any).productInventory.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'reels':
+          tabData = await (this.prisma as any).productReels.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'itemDetails':
+          tabData = await (this.prisma as any).productItemDetails.findUnique({
+            where: { productId }
+          });
+          break;
+        case 'shippingPolicies':
+          tabData = await (this.prisma as any).productShippingPolicies.findUnique({
+            where: { productId }
+          });
+          break;
+        default:
+          throw new BadRequestException(`Invalid tab name: ${tabName}`);
+      }
+
+      this.logger.log('Product tab data fetched successfully', { 
+        productId, 
+        tabName,
+        hasData: !!tabData,
+        isLegacyProduct
+      });
+
+      return tabData;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('Failed to fetch product tab data', error.stack, { productId, tabName });
+      throw new InternalServerErrorException('Failed to fetch product tab data: ' + error.message);
+    }
+  }
+
+  /**
    * Get full product detail including all child tabs
    */
   async getProductFullDetail(productId: string) {
@@ -1105,7 +1714,7 @@ export class ProductsService {
 
       this.logger.debug('Fetching full product detail', { productId });
 
-      const product = await (this.prisma as any).productMain.findUnique({
+      const product = await this.prisma.product.findUnique({
         where: { id: productId },
         include: {
           basic: true,
@@ -1119,7 +1728,7 @@ export class ProductsService {
           reels: true,
           itemDetails: true,
           shippingPolicies: true,
-        },
+        } as any,
       });
 
       if (!product) {
@@ -1155,7 +1764,7 @@ export class ProductsService {
 
       this.logger.log('Updating product rating', { productId, rating });
 
-      const product = await (this.prisma as any).productMain.findUnique({
+      const product = await this.prisma.product.findUnique({
         where: { id: productId },
       });
 
@@ -1163,9 +1772,9 @@ export class ProductsService {
         throw new NotFoundException(`Product with ID ${productId} not found`);
       }
 
-      const updatedProduct = await (this.prisma as any).productMain.update({
+      const updatedProduct = await this.prisma.product.update({
         where: { id: productId },
-        data: { rating },
+        data: { rating } as any,
       });
 
       this.logger.log('Product rating updated successfully', { productId, rating });
@@ -1191,7 +1800,7 @@ export class ProductsService {
 
       this.logger.log('Updating product reviews count', { productId, reviewsCount });
 
-      const product = await (this.prisma as any).productMain.findUnique({
+      const product = await this.prisma.product.findUnique({
         where: { id: productId },
       });
 
@@ -1199,9 +1808,9 @@ export class ProductsService {
         throw new NotFoundException(`Product with ID ${productId} not found`);
       }
 
-      const updatedProduct = await (this.prisma as any).productMain.update({
+      const updatedProduct = await this.prisma.product.update({
         where: { id: productId },
-        data: { reviewsCount },
+        data: { reviewsCount } as any,
       });
 
       this.logger.log('Product reviews count updated successfully', { productId, reviewsCount });
@@ -1227,7 +1836,7 @@ export class ProductsService {
 
       this.logger.log('Updating product views count', { productId, views });
 
-      const product = await (this.prisma as any).productMain.findUnique({
+      const product = await this.prisma.product.findUnique({
         where: { id: productId },
       });
 
@@ -1235,9 +1844,9 @@ export class ProductsService {
         throw new NotFoundException(`Product with ID ${productId} not found`);
       }
 
-      const updatedProduct = await (this.prisma as any).productMain.update({
+      const updatedProduct = await this.prisma.product.update({
         where: { id: productId },
-        data: { views },
+        data: { views } as any,
       });
 
       this.logger.log('Product views count updated successfully', { productId, views });
@@ -1248,6 +1857,526 @@ export class ProductsService {
       }
       this.logger.error('Failed to update product views count', error.stack, { productId, views });
       throw new InternalServerErrorException('Failed to update product views count: ' + error.message);
+    }
+  }
+
+  // ==================== FILTERING METHODS ====================
+
+  async getProductsWithFilters(queryDto: any) {
+    try {
+      this.logger.log('Fetching products with filters', { filters: queryDto });
+
+      const {
+        search,
+        categoryId,
+        collectionId,
+        signaturePieceId,
+        vendorId,
+        storeId,
+        tags,
+        tag,
+        minPrice,
+        maxPrice,
+        signaturePieces,
+        featured,
+        active,
+        sortBy = 'createdAt',
+        sortOrder = 'desc',
+        page = 1,
+        limit = 20
+      } = queryDto;
+
+      // Build comprehensive where clause with proper joins
+      const where: any = {
+        isDeleted: false
+      };
+
+      // Search filter
+      if (search) {
+        where.OR = [
+          { name: { contains: search, mode: 'insensitive' } },
+          { shortDescription: { contains: search, mode: 'insensitive' } }
+        ];
+      }
+
+      // Direct product table filters
+      if (categoryId) {
+        // For category filtering, we need to check both main table and basic table
+        // This will be handled in post-query filtering for better performance
+      }
+
+      if (vendorId) {
+        where.vendorId = vendorId;
+      }
+
+      if (storeId) {
+        where.storeId = storeId;
+      }
+
+      // Price filters
+      if (minPrice !== undefined || maxPrice !== undefined) {
+        where.price = {};
+        if (minPrice !== undefined) {
+          where.price.gte = minPrice;
+        }
+        if (maxPrice !== undefined) {
+          where.price.lte = maxPrice;
+        }
+      }
+
+      // Build orderBy clause
+      const orderBy: any = {};
+      orderBy[sortBy] = sortOrder;
+
+      // For complex filters, fetch all products first, then filter
+      // This is necessary because some filters require joins that Prisma doesn't handle well
+      const products = await this.prisma.product.findMany({
+        where,
+        orderBy,
+        include: {
+          basic: true,
+          pricing: true,
+          attributesTag: true,
+          media: true,
+          seo: true,
+          variants: true,
+          inventory: true,
+          reels: true,
+          itemDetails: true,
+          shippingPolicies: true
+        } as any
+      });
+
+      // Apply additional filters that require complex joins
+      let filteredProducts = products;
+
+      // Category filter (check both main table and basic table)
+      if (categoryId) {
+        filteredProducts = filteredProducts.filter(product => 
+          product.categoryId === categoryId || 
+          (product as any).basic?.category === categoryId
+        );
+      }
+
+      // Collection filter (from basic table)
+      if (collectionId) {
+        filteredProducts = filteredProducts.filter(product => 
+          (product as any).basic?.collection === collectionId
+        );
+      }
+
+      // Signature piece filters
+      if (signaturePieceId || signaturePieces) {
+        filteredProducts = filteredProducts.filter(product => 
+          (product as any).basic?.isSignaturePiece === true
+        );
+      }
+
+      // Featured filter
+      if (featured) {
+        filteredProducts = filteredProducts.filter(product => 
+          (product as any).basic?.isFeatured === true
+        );
+      }
+
+      // Active filter (from basic table)
+      if (active) {
+        filteredProducts = filteredProducts.filter(product => 
+          (product as any).basic?.isActive === true
+        );
+      }
+
+      // Tags filter (comma-separated)
+      if (tags) {
+        const tagList = tags.split(',').map((t: string) => t.trim());
+        filteredProducts = filteredProducts.filter(product => {
+          if (!(product as any).attributesTag?.tags) return false;
+          try {
+            const productTags = JSON.parse((product as any).attributesTag.tags);
+            return tagList.some((tag: string) => productTags.includes(tag));
+          } catch (error) {
+            return false;
+          }
+        });
+      }
+
+      // Single tag filter
+      if (tag) {
+        filteredProducts = filteredProducts.filter(product => {
+          if (!(product as any).attributesTag?.tags) return false;
+          try {
+            const productTags = JSON.parse((product as any).attributesTag.tags);
+            return productTags.includes(tag);
+          } catch (error) {
+            return false;
+          }
+        });
+      }
+
+      // Calculate pagination info based on filtered results
+      const filteredTotalCount = filteredProducts.length;
+      const totalPages = Math.ceil(filteredTotalCount / limit);
+      const hasNextPage = page < totalPages;
+      const hasPrevPage = page > 1;
+
+      // Apply pagination to filtered results
+      const startIndex = (page - 1) * limit;
+      const endIndex = startIndex + limit;
+      const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
+
+      this.logger.log('Products filtered successfully', { 
+        totalCount: filteredTotalCount, 
+        filteredCount: filteredProducts.length,
+        paginatedCount: paginatedProducts.length,
+        page,
+        limit,
+        filters: {
+          search,
+          categoryId,
+          collectionId,
+          signaturePieces,
+          featured,
+          active,
+          tags,
+          tag,
+          minPrice,
+          maxPrice
+        }
+      });
+
+      return {
+        products: paginatedProducts,
+        pagination: {
+          page,
+          limit,
+          totalCount: filteredTotalCount,
+          totalPages,
+          hasNextPage,
+          hasPrevPage
+        }
+      };
+    } catch (error) {
+      this.logger.error('Failed to fetch products with filters', error.stack, { filters: queryDto });
+      throw new InternalServerErrorException('Failed to fetch products with filters: ' + error.message);
+    }
+  }
+
+  async getProductsByCategory(categoryId: string, queryDto: any = {}) {
+    try {
+      this.logger.log('Fetching products by category', { categoryId });
+
+      // Validate category exists
+      const category = await this.prisma.category.findUnique({
+        where: { id: categoryId },
+        select: { id: true, name: true, isActive: true, isDeleted: true }
+      });
+
+      if (!category) {
+        this.logger.warn('Category not found', { categoryId });
+        return {
+          products: [],
+          pagination: {
+            page: 1,
+            limit: 20,
+            totalCount: 0,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false
+          },
+          categoryInfo: {
+            id: categoryId,
+            name: 'Category Not Found',
+            exists: false
+          }
+        };
+      }
+
+      if (category.isDeleted) {
+        this.logger.warn('Category is deleted', { categoryId });
+        return {
+          products: [],
+          pagination: {
+            page: 1,
+            limit: 20,
+            totalCount: 0,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false
+          },
+          categoryInfo: {
+            id: categoryId,
+            name: category.name,
+            exists: true,
+            isDeleted: true
+          }
+        };
+      }
+
+      const queryWithCategory = { ...queryDto, categoryId };
+      const result = await this.getProductsWithFilters(queryWithCategory);
+      
+      // Add category info to response
+      return {
+        ...result,
+        categoryInfo: {
+          id: categoryId,
+          name: category.name,
+          exists: true,
+          isActive: category.isActive
+        }
+      };
+    } catch (error) {
+      this.logger.error('Failed to fetch products by category', error.stack, { categoryId });
+      throw new InternalServerErrorException('Failed to fetch products by category: ' + error.message);
+    }
+  }
+
+  async getProductsByCollection(collectionId: string, queryDto: any = {}) {
+    try {
+      this.logger.log('Fetching products by collection', { collectionId });
+
+      // Validate collection exists
+      const collection = await this.prisma.collection.findUnique({
+        where: { id: collectionId },
+        select: { id: true, title: true, isActive: true, isDeleted: true }
+      });
+
+      if (!collection) {
+        this.logger.warn('Collection not found', { collectionId });
+        return {
+          products: [],
+          pagination: {
+            page: 1,
+            limit: 20,
+            totalCount: 0,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false
+          },
+          collectionInfo: {
+            id: collectionId,
+            title: 'Collection Not Found',
+            exists: false
+          }
+        };
+      }
+
+      if (collection.isDeleted) {
+        this.logger.warn('Collection is deleted', { collectionId });
+        return {
+          products: [],
+          pagination: {
+            page: 1,
+            limit: 20,
+            totalCount: 0,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false
+          },
+          collectionInfo: {
+            id: collectionId,
+            title: collection.title,
+            exists: true,
+            isDeleted: true
+          }
+        };
+      }
+
+      const queryWithCollection = { ...queryDto, collectionId };
+      const result = await this.getProductsWithFilters(queryWithCollection);
+      
+      // Add collection info to response
+      return {
+        ...result,
+        collectionInfo: {
+          id: collectionId,
+          title: collection.title,
+          exists: true,
+          isActive: collection.isActive
+        }
+      };
+    } catch (error) {
+      this.logger.error('Failed to fetch products by collection', error.stack, { collectionId });
+      throw new InternalServerErrorException('Failed to fetch products by collection: ' + error.message);
+    }
+  }
+
+  async getSignaturePieces(queryDto: any = {}) {
+    try {
+      this.logger.log('Fetching signature pieces');
+
+      const queryWithSignature = { ...queryDto, signaturePieces: true };
+      return await this.getProductsWithFilters(queryWithSignature);
+    } catch (error) {
+      this.logger.error('Failed to fetch signature pieces', error.stack);
+      throw new InternalServerErrorException('Failed to fetch signature pieces: ' + error.message);
+    }
+  }
+
+  async getProductsByTags(tags: string, queryDto: any = {}) {
+    try {
+      this.logger.log('Fetching products by tags', { tags });
+
+      const queryWithTags = { ...queryDto, tags };
+      return await this.getProductsWithFilters(queryWithTags);
+    } catch (error) {
+      this.logger.error('Failed to fetch products by tags', error.stack, { tags });
+      throw new InternalServerErrorException('Failed to fetch products by tags: ' + error.message);
+    }
+  }
+
+  async getProductsByPriceRange(minPrice: number, maxPrice: number, queryDto: any = {}) {
+    try {
+      this.logger.log('Fetching products by price range', { minPrice, maxPrice });
+
+      const queryWithPrice = { ...queryDto, minPrice, maxPrice };
+      return await this.getProductsWithFilters(queryWithPrice);
+    } catch (error) {
+      this.logger.error('Failed to fetch products by price range', error.stack, { minPrice, maxPrice });
+      throw new InternalServerErrorException('Failed to fetch products by price range: ' + error.message);
+    }
+  }
+
+  async searchProducts(searchTerm: string, queryDto: any = {}) {
+    try {
+      this.logger.log('Searching products', { searchTerm });
+
+      const queryWithSearch = { ...queryDto, search: searchTerm };
+      return await this.getProductsWithFilters(queryWithSearch);
+    } catch (error) {
+      this.logger.error('Failed to search products', error.stack, { searchTerm });
+      throw new InternalServerErrorException('Failed to search products: ' + error.message);
+    }
+  }
+
+  // ==================== MIGRATION METHODS ====================
+
+  /**
+   * Migrate existing products to ensure categoryId is properly assigned
+   * This method updates products that have category in basic table but not in main table
+   */
+  async migrateProductCategoryAssignments() {
+    try {
+      this.logger.log('Starting product category assignment migration');
+
+      const productsToUpdate = await this.prisma.product.findMany({
+        where: {
+          categoryId: null,
+          isDeleted: false
+        },
+        include: {
+          basic: true
+        } as any
+      });
+
+      this.logger.log(`Found ${productsToUpdate.length} products without categoryId assignment`);
+
+      let updatedCount = 0;
+      for (const product of productsToUpdate) {
+        if ((product as any).basic?.category) {
+          await this.prisma.product.update({
+            where: { id: product.id },
+            data: {
+              categoryId: (product as any).basic.category,
+              updatedBy: 'system-migration',
+              updatedAt: new Date()
+            }
+          });
+          updatedCount++;
+          this.logger.log(`Updated product ${product.name} with categoryId: ${(product as any).basic.category}`);
+        }
+      }
+
+      this.logger.log(`Migration completed: ${updatedCount} products updated`);
+      return {
+        totalProducts: productsToUpdate.length,
+        updatedProducts: updatedCount,
+        message: `Successfully migrated ${updatedCount} products with category assignments`
+      };
+    } catch (error) {
+      this.logger.error('Failed to migrate product category assignments', error.stack);
+      throw new InternalServerErrorException('Failed to migrate product category assignments: ' + error.message);
+    }
+  }
+
+  // ==================== ENHANCED UPDATE METHODS ====================
+
+  async updateMainProductWithPriceSync(productId: string, updateData: any, updatedBy: string) {
+    try {
+      this.logger.log('Updating main product with price synchronization', { productId, updateData });
+
+      // Check if product exists
+      const existingProduct = await this.prisma.product.findUnique({
+        where: { id: productId },
+        include: { pricing: true } as any
+      });
+
+      if (!existingProduct) {
+        throw new NotFoundException(`Product with ID ${productId} not found`);
+      }
+
+      // Prepare update data with metadata
+      const dataWithMetadata = {
+        ...updateData,
+        updatedBy,
+        updatedAt: new Date(),
+      };
+
+      // Start transaction to update both main product and pricing
+      const result = await this.prisma.$transaction(async (prisma) => {
+        // Update main product
+        const updatedProduct = await prisma.product.update({
+          where: { id: productId },
+          data: dataWithMetadata,
+        });
+
+        // If price is being updated, also update the pricing table
+        if (updateData.price !== undefined) {
+          if ((existingProduct as any).pricing) {
+            // Update existing pricing record
+            await prisma.productPricing.update({
+              where: { productId },
+              data: {
+                price: updateData.price.toString(),
+                priceUSD: updateData.price.toString(),
+                updatedBy,
+                updatedAt: new Date(),
+              },
+            });
+          } else {
+            // Create new pricing record if it doesn't exist
+            await prisma.productPricing.create({
+              data: {
+                productId,
+                price: updateData.price.toString(),
+                priceUSD: updateData.price.toString(),
+                currency: 'USD',
+                createdBy: updatedBy,
+                updatedBy,
+              },
+            });
+          }
+        }
+
+        return updatedProduct;
+      });
+
+      this.logger.log('Main product updated with price synchronization', { 
+        productId, 
+        updatedFields: Object.keys(updateData),
+        priceUpdated: updateData.price !== undefined
+      });
+
+      return result;
+    } catch (error) {
+      if (error.code === 'P2025') {
+        throw new NotFoundException(`Product with ID ${productId} not found`);
+      }
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('Failed to update main product with price sync', error.stack, { productId });
+      throw new InternalServerErrorException('Failed to update main product with price sync: ' + error.message);
     }
   }
 }

@@ -92,4 +92,14 @@ export class CreateProductDto {
   @ApiPropertyOptional({ description: 'Product attributes (JSON)' })
   @IsOptional()
   attributes?: any;
+
+  @ApiPropertyOptional({ description: 'Created by user ID' })
+  @IsOptional()
+  @IsString({ message: 'Created by must be a string' })
+  createdBy?: string;
+
+  @ApiPropertyOptional({ description: 'Updated by user ID' })
+  @IsOptional()
+  @IsString({ message: 'Updated by must be a string' })
+  updatedBy?: string;
 }

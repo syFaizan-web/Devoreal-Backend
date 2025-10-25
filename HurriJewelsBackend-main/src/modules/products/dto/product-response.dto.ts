@@ -1,7 +1,7 @@
 import { IsString, IsOptional, IsObject } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-export class ProductMainResponseDto {
+export class ProductResponseDto {
   @ApiProperty({ description: 'Product ID' })
   id: string;
 
@@ -27,7 +27,7 @@ export class ProductMainResponseDto {
   updatedBy?: string;
 }
 
-export class ProductFullResponseDto extends ProductMainResponseDto {
+export class ProductFullResponseDto extends ProductResponseDto {
   @ApiPropertyOptional({ description: 'Basic tab data' })
   basic?: any;
 

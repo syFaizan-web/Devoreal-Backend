@@ -74,20 +74,14 @@ export class QueryProductDto {
 
   @ApiPropertyOptional({ description: 'Filter by signature pieces only' })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
-  @IsBoolean({ message: 'Signature pieces filter must be a boolean' })
   signaturePieces?: boolean;
 
   @ApiPropertyOptional({ description: 'Filter by featured products only' })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
-  @IsBoolean({ message: 'Featured filter must be a boolean' })
   featured?: boolean;
 
   @ApiPropertyOptional({ description: 'Filter by active products only' })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
-  @IsBoolean({ message: 'Active filter must be a boolean' })
   active?: boolean;
 
   @ApiPropertyOptional({ description: 'Sort field', enum: SortField })

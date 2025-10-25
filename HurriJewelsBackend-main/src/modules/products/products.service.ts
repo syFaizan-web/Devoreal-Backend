@@ -270,58 +270,151 @@ export class ProductsService {
     }
   }
 
-  async remove(id: string) {
+  async hardDelete(id: string, userId?: string) {
     try {
       if (!id || id.trim() === '') {
         throw new BadRequestException('Product ID is required');
       }
 
-      this.logger.log('Soft deleting product', { id });
-      const existingProduct = await this.findOne(id);
-      
-      // Delete the product images if they exist
-      if ((existingProduct as any).image) {
-        try {
-          // Parse the images JSON string to get array of image paths
-          const imagePaths = JSON.parse((existingProduct as any).image);
-          if (Array.isArray(imagePaths)) {
-            for (const imagePath of imagePaths) {
-              try {
-                await this.fileUploadService.deleteFile(imagePath);
-              } catch (error) {
-                this.logger.warn('Failed to delete product image', { imagePath, error: error.message });
-              }
-            }
-          }
-        } catch (error) {
-          // If images is not a valid JSON array, treat it as a single image path
-          try {
-            await this.fileUploadService.deleteFile((existingProduct as any).image);
-          } catch (deleteError) {
-            this.logger.warn('Failed to delete product image', { error: deleteError.message, image: (existingProduct as any).image });
-          }
-        }
-      }
-      
-      const deletedProduct = await this.prisma.product.update({
+      this.logger.log('Starting hard delete for product', { productId: id, userId });
+
+      // Check if product exists
+      const product = await this.prisma.product.findFirst({
         where: { id },
-        data: {
-          isDeleted: true,
-          deletedAt: new Date(),
-        } as any,
+        include: {
+          basic: true,
+          pricing: true,
+          media: true,
+          seo: true,
+          attributesTag: true,
+          variants: true,
+          inventory: true,
+          reels: true,
+          itemDetails: true,
+          shippingPolicies: true
+        }
       });
 
-      this.logger.log('Product soft deleted successfully', { id, name: existingProduct.name });
-      return deletedProduct;
+      if (!product) {
+        throw new NotFoundException(`Product with ID ${id} not found`);
+      }
+
+      // Use transaction to ensure all deletions succeed or fail together
+      await this.prisma.$transaction(async (prisma) => {
+        // Delete all child tables first (due to foreign key constraints)
+        if (product.basic?.id) {
+          await prisma.productBasic.delete({
+            where: { id: product.basic.id }
+          });
+        }
+
+        if (product.pricing?.id) {
+          await prisma.productPricing.delete({
+            where: { id: product.pricing.id }
+          });
+        }
+
+        if (product.media?.id) {
+          await prisma.productMedia.delete({
+            where: { id: product.media.id }
+          });
+        }
+
+        if (product.seo?.id) {
+          await prisma.productSeo.delete({
+            where: { id: product.seo.id }
+          });
+        }
+
+        if (product.attributesTag?.id) {
+          await prisma.productAttributesTag.delete({
+            where: { id: product.attributesTag.id }
+          });
+        }
+
+        if (product.variants?.id) {
+          await prisma.productVariants.delete({
+            where: { id: product.variants.id }
+          });
+        }
+
+        if (product.inventory?.id) {
+          await prisma.productInventory.delete({
+            where: { id: product.inventory.id }
+          });
+        }
+
+        if (product.reels?.id) {
+          await prisma.productReels.delete({
+            where: { id: product.reels.id }
+          });
+        }
+
+        if (product.itemDetails?.id) {
+          await prisma.productItemDetails.delete({
+            where: { id: product.itemDetails.id }
+          });
+        }
+
+        if (product.shippingPolicies?.id) {
+          await prisma.productShippingPolicies.delete({
+            where: { id: product.shippingPolicies.id }
+          });
+        }
+
+        // Delete product images if they exist
+        if (product.image) {
+          try {
+            // Parse the images JSON string to get array of image paths
+            const imagePaths = JSON.parse(product.image);
+            if (Array.isArray(imagePaths)) {
+              for (const imagePath of imagePaths) {
+                try {
+                  await this.fileUploadService.deleteFile(imagePath);
+                } catch (error) {
+                  this.logger.warn('Failed to delete product image', { imagePath, error: error.message });
+                }
+              }
+            }
+          } catch (error) {
+            // If images is not a valid JSON array, treat it as a single image path
+            try {
+              await this.fileUploadService.deleteFile(product.image);
+            } catch (deleteError) {
+              this.logger.warn('Failed to delete product image', { error: deleteError.message, image: product.image });
+            }
+          }
+        }
+
+        // Finally, delete the main product record
+        await prisma.product.delete({
+          where: { id }
+        });
+      });
+
+      this.logger.log('Product hard deleted successfully', { 
+        productId: id, 
+        userId,
+        productName: product.name 
+      });
+
+      return { 
+        success: true, 
+        message: 'Product permanently deleted',
+        deletedProduct: {
+          id: product.id,
+          name: product.name
+        }
+      };
     } catch (error) {
+      this.logger.error('Failed to hard delete product', error.stack, { productId: id, userId });
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
       if (error.code === 'P2025') {
         throw new NotFoundException('Product not found');
       }
-      this.logger.error('Failed to delete product', error.stack, { id });
-      throw new InternalServerErrorException('Failed to delete product: ' + error.message);
+      throw new InternalServerErrorException('Failed to hard delete product: ' + error.message);
     }
   }
 
@@ -331,18 +424,187 @@ export class ProductsService {
         throw new BadRequestException('Product ID is required');
       }
 
-      const product = await this.findOne(id);
-      
-      // Check if product is already soft-deleted (new Product model doesn't have isDeleted field)
-      // if (product.isDeleted) {
-      //   throw new BadRequestException('Product is already deleted');
-      // }
+      this.logger.log('Starting soft delete for product', { productId: id, userId });
 
-      await this.prisma.product.update({
+      // Check if product exists
+      const product = await this.prisma.product.findFirst({
         where: { id },
-        data: { deletedAt: new Date(), deletedBy: userId } as any, // New Product model doesn't have isDeleted field
+        include: {
+          basic: true,
+          pricing: true,
+          media: true,
+          seo: true,
+          attributesTag: true,
+          variants: true,
+          inventory: true,
+          reels: true,
+          itemDetails: true,
+          shippingPolicies: true
+        }
+      });
+
+      if (!product) {
+        throw new NotFoundException(`Product with ID ${id} not found`);
+      }
+
+      // Check if product is already soft-deleted
+      if (product.isDeleted) {
+        throw new BadRequestException('Product is already deleted');
+      }
+
+      // Use transaction to ensure all updates succeed or fail together
+      await this.prisma.$transaction(async (prisma) => {
+        // Update main product table
+        await prisma.product.update({
+        where: { id },
+          data: {
+            isActive: false,
+            isDeleted: true,
+            deletedAt: new Date(),
+            deletedBy: userId,
+            updatedBy: userId
+          }
+        });
+
+        // Update all child tables
+        if (product.basic?.id) {
+          await prisma.productBasic.update({
+            where: { id: product.basic.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.pricing?.id) {
+          await prisma.productPricing.update({
+            where: { id: product.pricing.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.media?.id) {
+          await prisma.productMedia.update({
+            where: { id: product.media.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.seo?.id) {
+          await prisma.productSeo.update({
+            where: { id: product.seo.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.attributesTag?.id) {
+          await prisma.productAttributesTag.update({
+            where: { id: product.attributesTag.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.variants?.id) {
+          await prisma.productVariants.update({
+            where: { id: product.variants.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.inventory?.id) {
+          await prisma.productInventory.update({
+            where: { id: product.inventory.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.reels?.id) {
+          await prisma.productReels.update({
+            where: { id: product.reels.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.itemDetails?.id) {
+          await prisma.productItemDetails.update({
+            where: { id: product.itemDetails.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.shippingPolicies?.id) {
+          await prisma.productShippingPolicies.update({
+            where: { id: product.shippingPolicies.id },
+            data: {
+              isActive: false,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: userId,
+              updatedBy: userId
+            }
+          });
+        }
+      });
+
+      this.logger.log('Product soft deleted successfully', { 
+        productId: id, 
+        userId,
+        productName: product.name 
       });
     } catch (error) {
+      this.logger.error('Failed to soft delete product', error.stack, { productId: id, userId });
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
@@ -359,29 +621,187 @@ export class ProductsService {
         throw new BadRequestException('Product ID is required');
       }
 
+      this.logger.log('Starting restore for product', { productId: id, userId });
+
       // Check if product exists (including soft-deleted ones)
       const product = await this.prisma.product.findFirst({
-        where: { id } as any,
+        where: { id },
         include: {
-          vendor: true,
-          category: true,
-        },
+          basic: true,
+          pricing: true,
+          media: true,
+          seo: true,
+          attributesTag: true,
+          variants: true,
+          inventory: true,
+          reels: true,
+          itemDetails: true,
+          shippingPolicies: true
+        }
       });
 
       if (!product) {
         throw new NotFoundException(`Product with ID ${id} not found`);
       }
 
-      // Check if product is already restored (new Product model doesn't have isDeleted field)
-      // if (!product.isDeleted) {
-      //   throw new BadRequestException('Product is not deleted, cannot restore');
-      // }
+      // Check if product is already restored
+      if (!product.isDeleted) {
+        throw new BadRequestException('Product is not deleted, cannot restore');
+      }
 
-      await this.prisma.product.update({
-        where: { id },
-        data: { deletedAt: null, deletedBy: null, updatedBy: userId } as any,
+      // Use transaction to ensure all updates succeed or fail together
+      await this.prisma.$transaction(async (prisma) => {
+        // Update main product table
+        await prisma.product.update({
+          where: { id },
+          data: {
+            isActive: true,
+            isDeleted: false,
+            deletedAt: null,
+            deletedBy: null,
+            updatedBy: userId
+          }
+        });
+
+        // Update all child tables
+        if (product.basic?.id) {
+          await prisma.productBasic.update({
+            where: { id: product.basic.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.pricing?.id) {
+          await prisma.productPricing.update({
+            where: { id: product.pricing.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.media?.id) {
+          await prisma.productMedia.update({
+            where: { id: product.media.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.seo?.id) {
+          await prisma.productSeo.update({
+            where: { id: product.seo.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.attributesTag?.id) {
+          await prisma.productAttributesTag.update({
+            where: { id: product.attributesTag.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.variants?.id) {
+          await prisma.productVariants.update({
+            where: { id: product.variants.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.inventory?.id) {
+          await prisma.productInventory.update({
+            where: { id: product.inventory.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.reels?.id) {
+          await prisma.productReels.update({
+            where: { id: product.reels.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.itemDetails?.id) {
+          await prisma.productItemDetails.update({
+            where: { id: product.itemDetails.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+
+        if (product.shippingPolicies?.id) {
+          await prisma.productShippingPolicies.update({
+            where: { id: product.shippingPolicies.id },
+            data: {
+              isActive: true,
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: userId
+            }
+          });
+        }
+      });
+
+      this.logger.log('Product restored successfully', { 
+        productId: id, 
+        userId,
+        productName: product.name 
       });
     } catch (error) {
+      this.logger.error('Failed to restore product', error.stack, { productId: id, userId });
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
@@ -1866,6 +2286,7 @@ export class ProductsService {
     try {
       this.logger.log('Fetching products with filters', { filters: queryDto });
 
+      // Validate and normalize query parameters
       const {
         search,
         categoryId,
@@ -1886,16 +2307,112 @@ export class ProductsService {
         limit = 20
       } = queryDto;
 
+      // Validate pagination parameters
+      const validatedPage = Math.max(1, parseInt(page) || 1);
+      const validatedLimit = Math.min(Math.max(1, parseInt(limit) || 20), 100); // Max 100 items per page
+
+      // Validate price range
+      if (minPrice !== undefined && (isNaN(minPrice) || minPrice < 0)) {
+        throw new BadRequestException('Minimum price must be a non-negative number');
+      }
+      if (maxPrice !== undefined && (isNaN(maxPrice) || maxPrice < 0)) {
+        throw new BadRequestException('Maximum price must be a non-negative number');
+      }
+      if (minPrice !== undefined && maxPrice !== undefined && minPrice > maxPrice) {
+        throw new BadRequestException('Minimum price cannot be greater than maximum price');
+      }
+
+      // Validate sort parameters
+      const allowedSortFields = ['createdAt', 'updatedAt', 'name', 'price', 'rating', 'views', 'reviewsCount'];
+      const validatedSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'createdAt';
+      const validatedSortOrder = ['asc', 'desc'].includes(sortOrder.toLowerCase()) ? sortOrder.toLowerCase() : 'desc';
+
+      this.logger.log('Validated filter parameters', {
+        search: search || null,
+        categoryId: categoryId || null,
+        collectionId: collectionId || null,
+        tags: tags || null,
+        tag: tag || null,
+        priceRange: minPrice !== undefined || maxPrice !== undefined ? `${minPrice || 0}-${maxPrice || '∞'}` : null,
+        signaturePieces: signaturePieces !== undefined ? signaturePieces : null,
+        featured: featured !== undefined ? featured : null,
+        active: active !== undefined ? active : null,
+        sortBy: validatedSortBy,
+        sortOrder: validatedSortOrder,
+        page: validatedPage,
+        limit: validatedLimit,
+        // Debug: Show raw parameter types
+        debugTypes: {
+          signaturePiecesType: typeof signaturePieces,
+          featuredType: typeof featured,
+          activeType: typeof active,
+          signaturePiecesValue: signaturePieces,
+          featuredValue: featured,
+          activeValue: active
+        }
+      });
+
       // Build comprehensive where clause with proper joins
       const where: any = {
         isDeleted: false
+        // Note: isActive filter will be handled in post-query filtering for better control
       };
 
-      // Search filter
+      // Enhanced search filter - search across multiple fields
       if (search) {
+        const searchTerm = search.trim();
+        this.logger.log('Applying search filter', { searchTerm });
+        
         where.OR = [
-          { name: { contains: search, mode: 'insensitive' } },
-          { shortDescription: { contains: search, mode: 'insensitive' } }
+          // Search in main product fields
+          { name: { contains: searchTerm, mode: 'insensitive' } },
+          { shortDescription: { contains: searchTerm, mode: 'insensitive' } },
+          
+          // Search in product basic fields
+          { 
+            basic: {
+              description: { contains: searchTerm, mode: 'insensitive' }
+            }
+          },
+          { 
+            basic: {
+              brand: { contains: searchTerm, mode: 'insensitive' }
+            }
+          },
+          { 
+            basic: {
+              colorName: { contains: searchTerm, mode: 'insensitive' }
+            }
+          },
+          { 
+            basic: {
+              slug: { contains: searchTerm, mode: 'insensitive' }
+            }
+          },
+          
+          // Search in tags (both basic and attributes)
+          { 
+            basic: {
+              tags: { contains: searchTerm, mode: 'insensitive' }
+            }
+          },
+          { 
+            attributesTag: {
+              tags: { contains: searchTerm, mode: 'insensitive' }
+            }
+          },
+          
+          // Search in category and collection (by name, not just ID)
+          { 
+            basic: {
+              category: { contains: searchTerm, mode: 'insensitive' }
+            }
+          },
+          { 
+            basic: {
+              collection: { contains: searchTerm, mode: 'insensitive' }
+            }
+          }
         ];
       }
 
@@ -1924,9 +2441,14 @@ export class ProductsService {
         }
       }
 
+      // Active filter - handle both true and false values
+      if (active !== undefined) {
+        where.isActive = active === true || active === 'true';
+      }
+
       // Build orderBy clause
       const orderBy: any = {};
-      orderBy[sortBy] = sortOrder;
+      orderBy[validatedSortBy] = validatedSortOrder;
 
       // For complex filters, fetch all products first, then filter
       // This is necessary because some filters require joins that Prisma doesn't handle well
@@ -1965,71 +2487,283 @@ export class ProductsService {
         );
       }
 
-      // Signature piece filters
-      if (signaturePieceId || signaturePieces) {
-        filteredProducts = filteredProducts.filter(product => 
-          (product as any).basic?.isSignaturePiece === true
-        );
+      // Signature piece filters - focus on ProductBasic table
+      if (signaturePieceId || signaturePieces !== undefined) {
+        const signatureValue = signaturePieces === true || signaturePieces === 'true';
+        const beforeCount = filteredProducts.length;
+        
+        // Debug: Log sample product signature values before filtering
+        const sampleProducts = filteredProducts.slice(0, 3).map(p => ({
+          id: (p as any).id,
+          name: (p as any).name,
+          basicSignaturePiece: (p as any).basic?.isSignaturePiece,
+          mainSignaturePiece: (p as any).isSignaturePiece
+        }));
+        
+        filteredProducts = filteredProducts.filter(product => {
+          // Check ProductBasic table for isSignaturePiece
+          const basicSignaturePiece = (product as any).basic?.isSignaturePiece;
+          
+          // If basic table has the field, use it
+          if (basicSignaturePiece !== undefined && basicSignaturePiece !== null) {
+            return basicSignaturePiece === signatureValue;
+          }
+          
+          // If no basic data or field is null/undefined, exclude from results
+          // This ensures we only show products with explicit signature piece status
+          return false;
+        });
+        
+        this.logger.log('Signature pieces filter applied', {
+          signatureValue,
+          beforeCount,
+          afterCount: filteredProducts.length,
+          filteredOut: beforeCount - filteredProducts.length,
+          sampleProductsBeforeFilter: sampleProducts
+        });
       }
 
-      // Featured filter
-      if (featured) {
-        filteredProducts = filteredProducts.filter(product => 
-          (product as any).basic?.isFeatured === true
-        );
+      // Featured filter - focus on ProductBasic table
+      if (featured !== undefined) {
+        const featuredValue = featured === true || featured === 'true';
+        const beforeCount = filteredProducts.length;
+        
+        // Debug: Log sample product featured values before filtering
+        const sampleProducts = filteredProducts.slice(0, 3).map(p => ({
+          id: (p as any).id,
+          name: (p as any).name,
+          basicFeatured: (p as any).basic?.isFeatured,
+          mainFeatured: (p as any).isFeatured
+        }));
+        
+        filteredProducts = filteredProducts.filter(product => {
+          // Check ProductBasic table for isFeatured
+          const basicFeatured = (product as any).basic?.isFeatured;
+          
+          // If basic table has the field, use it
+          if (basicFeatured !== undefined && basicFeatured !== null) {
+            return basicFeatured === featuredValue;
+          }
+          
+          // If no basic data or field is null/undefined, exclude from results
+          // This ensures we only show products with explicit featured status
+          return false;
+        });
+        
+        this.logger.log('Featured filter applied', {
+          featuredValue,
+          beforeCount,
+          afterCount: filteredProducts.length,
+          filteredOut: beforeCount - filteredProducts.length,
+          sampleProductsBeforeFilter: sampleProducts
+        });
       }
 
-      // Active filter (from basic table)
-      if (active) {
-        filteredProducts = filteredProducts.filter(product => 
-          (product as any).basic?.isActive === true
-        );
+      // Active filter - focus on ProductBasic table
+      // Default to active products if no active parameter is provided
+      const activeValue = active !== undefined ? (active === true || active === 'true') : true;
+      const beforeCount = filteredProducts.length;
+      
+      filteredProducts = filteredProducts.filter(product => {
+        // Check ProductBasic table for isActive
+        const basicActive = (product as any).basic?.isActive;
+        
+        // If basic table has the field, use it
+        if (basicActive !== undefined && basicActive !== null) {
+          return basicActive === activeValue;
+        }
+        
+        // Fallback to main product table if basic table doesn't have the field
+        const mainActive = (product as any).isActive;
+        if (mainActive !== undefined && mainActive !== null) {
+          return mainActive === activeValue;
+        }
+        
+        // If no active status found, exclude from results
+        return false;
+      });
+      
+      this.logger.log('Active filter applied', {
+        activeValue,
+        beforeCount,
+        afterCount: filteredProducts.length,
+        filteredOut: beforeCount - filteredProducts.length
+      });
+
+      // Enhanced search filter - post-query filtering for complex searches
+      if (search) {
+        const searchTerm = search.trim().toLowerCase();
+        const beforeCount = filteredProducts.length;
+        
+        filteredProducts = filteredProducts.filter(product => {
+          // Check if already matched by Prisma query
+          const productName = (product as any).name?.toLowerCase() || '';
+          const shortDescription = (product as any).shortDescription?.toLowerCase() || '';
+          const basicDescription = (product as any).basic?.description?.toLowerCase() || '';
+          const brand = (product as any).basic?.brand?.toLowerCase() || '';
+          const colorName = (product as any).basic?.colorName?.toLowerCase() || '';
+          const slug = (product as any).basic?.slug?.toLowerCase() || '';
+          const category = (product as any).basic?.category?.toLowerCase() || '';
+          const collection = (product as any).basic?.collection?.toLowerCase() || '';
+          
+          // Check basic text fields
+          if (productName.includes(searchTerm) || 
+              shortDescription.includes(searchTerm) ||
+              basicDescription.includes(searchTerm) ||
+              brand.includes(searchTerm) ||
+              colorName.includes(searchTerm) ||
+              slug.includes(searchTerm) ||
+              category.includes(searchTerm) ||
+              collection.includes(searchTerm)) {
+            return true;
+          }
+          
+          // Check tags in ProductBasic table
+          if ((product as any).basic?.tags) {
+            try {
+              const basicTags = JSON.parse((product as any).basic.tags);
+              if (Array.isArray(basicTags)) {
+                const hasTagMatch = basicTags.some((tag: string) => 
+                  tag.toLowerCase().includes(searchTerm)
+                );
+                if (hasTagMatch) return true;
+              }
+            } catch (error) {
+              // If JSON parsing fails, try string search
+              const tagsString = (product as any).basic.tags.toLowerCase();
+              if (tagsString.includes(searchTerm)) return true;
+            }
+          }
+          
+          // Check tags in ProductAttributesTag table
+          if ((product as any).attributesTag?.tags) {
+            try {
+              const attributeTags = JSON.parse((product as any).attributesTag.tags);
+              if (Array.isArray(attributeTags)) {
+                const hasTagMatch = attributeTags.some((tag: string) => 
+                  tag.toLowerCase().includes(searchTerm)
+                );
+                if (hasTagMatch) return true;
+              }
+            } catch (error) {
+              // If JSON parsing fails, try string search
+              const tagsString = (product as any).attributesTag.tags.toLowerCase();
+              if (tagsString.includes(searchTerm)) return true;
+            }
+          }
+          
+          return false;
+        });
+        
+        this.logger.log('Enhanced search filter applied', {
+          searchTerm,
+          beforeCount,
+          afterCount: filteredProducts.length,
+          filteredOut: beforeCount - filteredProducts.length
+        });
       }
 
       // Tags filter (comma-separated)
       if (tags) {
-        const tagList = tags.split(',').map((t: string) => t.trim());
+        const tagList = tags.split(',').map((t: string) => t.trim().toLowerCase());
         filteredProducts = filteredProducts.filter(product => {
-          if (!(product as any).attributesTag?.tags) return false;
-          try {
-            const productTags = JSON.parse((product as any).attributesTag.tags);
-            return tagList.some((tag: string) => productTags.includes(tag));
+          let hasMatchingTag = false;
+
+          // Check tags in ProductBasic table
+          if ((product as any).basic?.tags) {
+            try {
+              const basicTags = JSON.parse((product as any).basic.tags);
+              if (Array.isArray(basicTags)) {
+                const basicTagMatches = basicTags.some((productTag: string) => 
+                  tagList.some(searchTag => 
+                    productTag.toLowerCase().includes(searchTag) || searchTag.includes(productTag.toLowerCase())
+                  )
+                );
+                if (basicTagMatches) hasMatchingTag = true;
+              }
           } catch (error) {
-            return false;
+              this.logger.warn('Failed to parse basic tags in filter', { productId: product.id });
+            }
           }
+
+          // Check tags in ProductAttributesTag table
+          if (!hasMatchingTag && (product as any).attributesTag?.tags) {
+            try {
+              const attributeTags = JSON.parse((product as any).attributesTag.tags);
+              if (Array.isArray(attributeTags)) {
+                const attributeTagMatches = attributeTags.some((productTag: string) => 
+                  tagList.some(searchTag => 
+                    productTag.toLowerCase().includes(searchTag) || searchTag.includes(productTag.toLowerCase())
+                  )
+                );
+                if (attributeTagMatches) hasMatchingTag = true;
+              }
+            } catch (error) {
+              this.logger.warn('Failed to parse attribute tags in filter', { productId: product.id });
+            }
+          }
+
+          return hasMatchingTag;
         });
       }
 
       // Single tag filter
       if (tag) {
+        const searchTag = tag.toLowerCase();
         filteredProducts = filteredProducts.filter(product => {
-          if (!(product as any).attributesTag?.tags) return false;
-          try {
-            const productTags = JSON.parse((product as any).attributesTag.tags);
-            return productTags.includes(tag);
+          let hasMatchingTag = false;
+
+          // Check tags in ProductBasic table
+          if ((product as any).basic?.tags) {
+            try {
+              const basicTags = JSON.parse((product as any).basic.tags);
+              if (Array.isArray(basicTags)) {
+                const basicTagMatches = basicTags.some((productTag: string) => 
+                  productTag.toLowerCase().includes(searchTag) || searchTag.includes(productTag.toLowerCase())
+                );
+                if (basicTagMatches) hasMatchingTag = true;
+              }
           } catch (error) {
-            return false;
+              this.logger.warn('Failed to parse basic tags in single tag filter', { productId: product.id });
+            }
           }
+
+          // Check tags in ProductAttributesTag table
+          if (!hasMatchingTag && (product as any).attributesTag?.tags) {
+            try {
+              const attributeTags = JSON.parse((product as any).attributesTag.tags);
+              if (Array.isArray(attributeTags)) {
+                const attributeTagMatches = attributeTags.some((productTag: string) => 
+                  productTag.toLowerCase().includes(searchTag) || searchTag.includes(productTag.toLowerCase())
+                );
+                if (attributeTagMatches) hasMatchingTag = true;
+              }
+            } catch (error) {
+              this.logger.warn('Failed to parse attribute tags in single tag filter', { productId: product.id });
+            }
+          }
+
+          return hasMatchingTag;
         });
       }
 
       // Calculate pagination info based on filtered results
       const filteredTotalCount = filteredProducts.length;
-      const totalPages = Math.ceil(filteredTotalCount / limit);
-      const hasNextPage = page < totalPages;
-      const hasPrevPage = page > 1;
+      const totalPages = Math.ceil(filteredTotalCount / validatedLimit);
+      const hasNextPage = validatedPage < totalPages;
+      const hasPrevPage = validatedPage > 1;
 
       // Apply pagination to filtered results
-      const startIndex = (page - 1) * limit;
-      const endIndex = startIndex + limit;
+      const startIndex = (validatedPage - 1) * validatedLimit;
+      const endIndex = startIndex + validatedLimit;
       const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
 
       this.logger.log('Products filtered successfully', { 
         totalCount: filteredTotalCount, 
         filteredCount: filteredProducts.length,
         paginatedCount: paginatedProducts.length,
-        page,
-        limit,
+        page: validatedPage,
+        limit: validatedLimit,
         filters: {
           search,
           categoryId,
@@ -2047,8 +2781,8 @@ export class ProductsService {
       return {
         products: paginatedProducts,
         pagination: {
-          page,
-          limit,
+          page: validatedPage,
+          limit: validatedLimit,
           totalCount: filteredTotalCount,
           totalPages,
           hasNextPage,
@@ -2217,8 +2951,153 @@ export class ProductsService {
     try {
       this.logger.log('Fetching products by tags', { tags });
 
-      const queryWithTags = { ...queryDto, tags };
-      return await this.getProductsWithFilters(queryWithTags);
+      // Parse comma-separated tags
+      const tagList = tags.split(',').map((t: string) => t.trim().toLowerCase());
+      
+      const {
+        sortBy = 'createdAt',
+        sortOrder = 'desc',
+        page = 1,
+        limit = 20
+      } = queryDto;
+
+      // Build orderBy clause
+      const orderBy: any = {};
+      orderBy[sortBy] = sortOrder;
+
+      // Fetch all products with their related tabs
+      const products = await this.prisma.product.findMany({
+        where: {
+          isDeleted: false,
+          isActive: true
+        },
+        include: {
+          basic: true,
+          attributesTag: true,
+          pricing: true,
+          media: true,
+          vendor: {
+            select: {
+              id: true,
+              businessName: true,
+              isVerified: true
+            }
+          },
+          category: {
+            select: {
+              id: true,
+              name: true
+            }
+          }
+        },
+        orderBy
+      });
+
+      // Filter products by tags - check both basic.tags and attributesTag.tags
+      const filteredProducts = products.filter(product => {
+        let hasMatchingTag = false;
+
+        // Check tags in ProductBasic table
+        if (product.basic?.tags) {
+          try {
+            const basicTags = JSON.parse(product.basic.tags);
+            if (Array.isArray(basicTags)) {
+              const basicTagMatches = basicTags.some((tag: string) => 
+                tagList.some(searchTag => 
+                  tag.toLowerCase().includes(searchTag) || searchTag.includes(tag.toLowerCase())
+                )
+              );
+              if (basicTagMatches) hasMatchingTag = true;
+            }
+          } catch (error) {
+            this.logger.warn('Failed to parse basic tags', { productId: product.id, tags: product.basic.tags });
+          }
+        }
+
+        // Check tags in ProductAttributesTag table
+        if (!hasMatchingTag && product.attributesTag?.tags) {
+          try {
+            const attributeTags = JSON.parse(product.attributesTag.tags);
+            if (Array.isArray(attributeTags)) {
+              const attributeTagMatches = attributeTags.some((tag: string) => 
+                tagList.some(searchTag => 
+                  tag.toLowerCase().includes(searchTag) || searchTag.includes(tag.toLowerCase())
+                )
+              );
+              if (attributeTagMatches) hasMatchingTag = true;
+            }
+          } catch (error) {
+            this.logger.warn('Failed to parse attribute tags', { productId: product.id, tags: product.attributesTag.tags });
+          }
+        }
+
+        return hasMatchingTag;
+      });
+
+      // Apply additional filters from queryDto
+      let finalFilteredProducts = filteredProducts;
+
+      // Apply other filters if provided
+      if (queryDto.search) {
+        const searchTerm = queryDto.search.toLowerCase();
+        finalFilteredProducts = finalFilteredProducts.filter(product => 
+          product.name.toLowerCase().includes(searchTerm) ||
+          (product.shortDescription && product.shortDescription.toLowerCase().includes(searchTerm))
+        );
+      }
+
+      if (queryDto.minPrice !== undefined || queryDto.maxPrice !== undefined) {
+        finalFilteredProducts = finalFilteredProducts.filter(product => {
+          const price = product.price || 0;
+          if (queryDto.minPrice !== undefined && price < queryDto.minPrice) return false;
+          if (queryDto.maxPrice !== undefined && price > queryDto.maxPrice) return false;
+          return true;
+        });
+      }
+
+      if (queryDto.featured !== undefined) {
+        finalFilteredProducts = finalFilteredProducts.filter(product => 
+          product.basic?.isFeatured === queryDto.featured
+        );
+      }
+
+      if (queryDto.signaturePieces !== undefined) {
+        finalFilteredProducts = finalFilteredProducts.filter(product => 
+          product.basic?.isSignaturePiece === queryDto.signaturePieces
+        );
+      }
+
+      // Calculate pagination
+      const totalCount = finalFilteredProducts.length;
+      const totalPages = Math.ceil(totalCount / limit);
+      const hasNextPage = page < totalPages;
+      const hasPrevPage = page > 1;
+
+      // Apply pagination
+      const startIndex = (page - 1) * limit;
+      const endIndex = startIndex + limit;
+      const paginatedProducts = finalFilteredProducts.slice(startIndex, endIndex);
+
+      this.logger.log('Products filtered by tags successfully', { 
+        tags: tagList,
+        totalCount,
+        filteredCount: finalFilteredProducts.length,
+        paginatedCount: paginatedProducts.length,
+        page,
+        limit
+      });
+
+      return {
+        products: paginatedProducts,
+        pagination: {
+          page,
+          limit,
+          totalCount,
+          totalPages,
+          hasNextPage,
+          hasPrevPage
+        }
+      };
     } catch (error) {
       this.logger.error('Failed to fetch products by tags', error.stack, { tags });
       throw new InternalServerErrorException('Failed to fetch products by tags: ' + error.message);

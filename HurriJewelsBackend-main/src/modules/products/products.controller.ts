@@ -34,7 +34,6 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductResponseDto, ProductFullResponseDto } from './dto/product-response.dto';
 import { QueryProductDto } from './dto/query-product.dto';
 import { UpdateMainProductDto } from './dto/update-main-product.dto';
-import { SearchProductDto } from './dto/search-product.dto';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -130,23 +129,60 @@ export class ProductsController {
 
   @Get('filter')
   @Public()
-  @ApiOperation({ summary: 'Get products with advanced filtering options' })
+  @ApiOperation({ 
+    summary: 'Professional Product Filtering - All-in-One Endpoint',
+    description: 'Comprehensive product filtering with support for search, category, collection, tags, price range, vendor, store, and more. This single endpoint replaces all individual filter endpoints.'
+  })
+  @ApiQuery({ name: 'search', required: false, type: String, description: 'Search term for product name or description' })
+  @ApiQuery({ name: 'categoryId', required: false, type: String, description: 'Filter by category ID' })
+  @ApiQuery({ name: 'collectionId', required: false, type: String, description: 'Filter by collection ID' })
+  @ApiQuery({ name: 'vendorId', required: false, type: String, description: 'Filter by vendor ID' })
+  @ApiQuery({ name: 'storeId', required: false, type: String, description: 'Filter by store ID' })
+  @ApiQuery({ name: 'tags', required: false, type: String, description: 'Filter by tags (comma-separated)' })
+  @ApiQuery({ name: 'tag', required: false, type: String, description: 'Filter by single tag' })
+  @ApiQuery({ name: 'minPrice', required: false, type: Number, description: 'Minimum price filter' })
+  @ApiQuery({ name: 'maxPrice', required: false, type: Number, description: 'Maximum price filter' })
+  @ApiQuery({ name: 'signaturePieces', required: false, type: Boolean, description: 'Filter signature pieces (true/false)' })
+  @ApiQuery({ name: 'featured', required: false, type: Boolean, description: 'Filter featured products (true/false)' })
+  @ApiQuery({ name: 'active', required: false, type: Boolean, description: 'Filter active products (true/false)' })
+  @ApiQuery({ name: 'sortBy', required: false, type: String, description: 'Sort field (createdAt, updatedAt, name, price, rating, views)' })
+  @ApiQuery({ name: 'sortOrder', required: false, type: String, description: 'Sort order (asc, desc)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 20)' })
   @ApiResponse({
     status: 200,
     description: 'Filtered products retrieved successfully',
     schema: {
       type: 'object',
       properties: {
-        products: { type: 'array', items: { $ref: '#/components/schemas/ProductResponseDto' } },
+        products: { 
+          type: 'array', 
+          items: { $ref: '#/components/schemas/ProductResponseDto' },
+          description: 'Array of filtered products'
+        },
         pagination: {
           type: 'object',
           properties: {
-            page: { type: 'number' },
-            limit: { type: 'number' },
-            totalCount: { type: 'number' },
-            totalPages: { type: 'number' },
-            hasNextPage: { type: 'boolean' },
-            hasPrevPage: { type: 'boolean' }
+            page: { type: 'number', description: 'Current page number' },
+            limit: { type: 'number', description: 'Items per page' },
+            totalCount: { type: 'number', description: 'Total number of products matching filters' },
+            totalPages: { type: 'number', description: 'Total number of pages' },
+            hasNextPage: { type: 'boolean', description: 'Whether there is a next page' },
+            hasPrevPage: { type: 'boolean', description: 'Whether there is a previous page' }
+          },
+          description: 'Pagination information'
+        },
+        filters: {
+          type: 'object',
+          description: 'Applied filters summary',
+          properties: {
+            search: { type: 'string', description: 'Applied search term' },
+            categoryId: { type: 'string', description: 'Applied category filter' },
+            collectionId: { type: 'string', description: 'Applied collection filter' },
+            tags: { type: 'string', description: 'Applied tags filter' },
+            priceRange: { type: 'object', description: 'Applied price range' },
+            signaturePieces: { type: 'boolean', description: 'Signature pieces filter' },
+            featured: { type: 'boolean', description: 'Featured products filter' }
           }
         }
       }
@@ -154,20 +190,82 @@ export class ProductsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad request - Invalid query parameters',
+    description: 'Bad request - Invalid query parameters or filter values',
   })
   @ApiResponse({
     status: 500,
     description: 'Internal server error',
   })
-  async getProductsWithFilters(@Query() query: QueryProductDto) {
+  async getProductsWithFilters(@Query() query: QueryProductDto, @Req() req: any) {
     try {
-      this.logger.log('Fetching products with filters', { query });
+      // Debug: Log raw query parameters before any processing
+      console.log('Controller - Raw query object:', JSON.stringify(query, null, 2));
+      console.log('Controller - Raw URL query:', req.query);
+      
+      // Manual parameter parsing to fix boolean transformation issue
+      const rawQuery = req.query;
+      if (rawQuery.signaturePieces !== undefined) {
+        if (rawQuery.signaturePieces === 'false' || rawQuery.signaturePieces === false) {
+          query.signaturePieces = false;
+        } else if (rawQuery.signaturePieces === 'true' || rawQuery.signaturePieces === true) {
+          query.signaturePieces = true;
+        }
+      }
+      
+      if (rawQuery.featured !== undefined) {
+        if (rawQuery.featured === 'false' || rawQuery.featured === false) {
+          query.featured = false;
+        } else if (rawQuery.featured === 'true' || rawQuery.featured === true) {
+          query.featured = true;
+        }
+      }
+      
+      if (rawQuery.active !== undefined) {
+        if (rawQuery.active === 'false' || rawQuery.active === false) {
+          query.active = false;
+        } else if (rawQuery.active === 'true' || rawQuery.active === true) {
+          query.active = true;
+        }
+      }
+      
+      console.log('Controller - Fixed query object:', JSON.stringify(query, null, 2));
+      
+      this.logger.log('Fetching products with comprehensive filters', { 
+        filters: query,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Debug: Log raw query parameters before DTO transformation
+      this.logger.log('Raw query parameters received', {
+        signaturePieces: query.signaturePieces,
+        featured: query.featured,
+        active: query.active,
+        signaturePiecesType: typeof query.signaturePieces,
+        featuredType: typeof query.featured,
+        activeType: typeof query.active
+      });
+      
       const result = await this.productsService.getProductsWithFilters(query);
-      this.logger.log(`Successfully fetched ${result.products.length} filtered products`);
+      
+      this.logger.log(`Successfully fetched ${result.products.length} filtered products`, {
+        totalCount: result.pagination?.totalCount || 0,
+        appliedFilters: {
+          search: query.search,
+          categoryId: query.categoryId,
+          collectionId: query.collectionId,
+          tags: query.tags,
+          priceRange: query.minPrice || query.maxPrice ? `${query.minPrice || 0}-${query.maxPrice || '∞'}` : null,
+          signaturePieces: query.signaturePieces,
+          featured: query.featured
+        }
+      });
+      
       return result;
     } catch (error) {
-      this.logger.error('Failed to fetch filtered products', error.stack, { query });
+      this.logger.error('Failed to fetch filtered products', error.stack, { 
+        query,
+        timestamp: new Date().toISOString()
+      });
       if (error instanceof HttpException) {
         throw error;
       }
@@ -175,119 +273,8 @@ export class ProductsController {
     }
   }
 
-  @Get('search')
-  @Public()
-  @ApiOperation({ summary: 'Search products by name or description' })
-  @ApiQuery({ name: 'q', required: true, type: String, description: 'Search term' })
-  @ApiResponse({
-    status: 200,
-    description: 'Search results retrieved successfully',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Search term required',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  async searchProducts(@Query() query: SearchProductDto) {
-    try {
-      if (!query.q || query.q.trim() === '') {
-        throw new BadRequestException('Search term is required');
-      }
 
-      this.logger.log('Searching products', { searchTerm: query.q });
-      const result = await this.productsService.searchProducts(query.q, query);
-      this.logger.log(`Search completed: ${result.products.length} results found`);
-      return result;
-    } catch (error) {
-      this.logger.error('Failed to search products', error.stack, { searchTerm: query.q });
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Failed to search products: ' + error.message);
-    }
-  }
 
-  @Get('category/:categoryId')
-  @Public()
-  @ApiOperation({ summary: 'Get products by category' })
-  @ApiParam({ name: 'categoryId', required: true, type: String, description: 'Category ID' })
-  @ApiResponse({
-    status: 200,
-    description: 'Products by category retrieved successfully',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Invalid category ID',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  async getProductsByCategory(@Param('categoryId') categoryId: string, @Query() query: QueryProductDto) {
-    try {
-      if (!categoryId || categoryId.trim() === '') {
-        throw new BadRequestException('Category ID is required');
-      }
-
-      this.logger.log('Fetching products by category', { categoryId });
-      const result = await this.productsService.getProductsByCategory(categoryId, query);
-      this.logger.log(`Successfully fetched ${result.products.length} products for category ${categoryId}`);
-      return result;
-    } catch (error) {
-      this.logger.error('Failed to fetch products by category', error.stack, { categoryId });
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Failed to fetch products by category: ' + error.message);
-    }
-  }
-
-  @Get('collection/:collectionId')
-  @Public()
-  @ApiOperation({ summary: 'Get products by collection' })
-  @ApiParam({ name: 'collectionId', required: true, type: String, description: 'Collection ID' })
-  @ApiResponse({
-    status: 200,
-    description: 'Products by collection retrieved successfully',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Invalid collection ID',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  async getProductsByCollection(@Param('collectionId') collectionId: string, @Query() query: QueryProductDto) {
-    try {
-      if (!collectionId || collectionId.trim() === '') {
-        throw new BadRequestException('Collection ID is required');
-      }
-
-      this.logger.log('Fetching products by collection', { collectionId });
-      const result = await this.productsService.getProductsByCollection(collectionId, query);
-      this.logger.log(`Successfully fetched ${result.products.length} products for collection ${collectionId}`);
-      return result;
-    } catch (error) {
-      this.logger.error('Failed to fetch products by collection', error.stack, { collectionId });
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Failed to fetch products by collection: ' + error.message);
-    }
-  }
 
   @Get('signature-pieces')
   @Public()
@@ -315,97 +302,7 @@ export class ProductsController {
     }
   }
 
-  @Get('tags/:tags')
-  @Public()
-  @ApiOperation({ summary: 'Get products by tags' })
-  @ApiParam({ name: 'tags', required: true, type: String, description: 'Comma-separated tags' })
-  @ApiResponse({
-    status: 200,
-    description: 'Products by tags retrieved successfully',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Invalid tags',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  async getProductsByTags(@Param('tags') tags: string, @Query() query: QueryProductDto) {
-    try {
-      if (!tags || tags.trim() === '') {
-        throw new BadRequestException('Tags are required');
-      }
 
-      this.logger.log('Fetching products by tags', { tags });
-      const result = await this.productsService.getProductsByTags(tags, query);
-      this.logger.log(`Successfully fetched ${result.products.length} products for tags: ${tags}`);
-      return result;
-    } catch (error) {
-      this.logger.error('Failed to fetch products by tags', error.stack, { tags });
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Failed to fetch products by tags: ' + error.message);
-    }
-  }
-
-  @Get('price-range/:minPrice/:maxPrice')
-  @Public()
-  @ApiOperation({ summary: 'Get products by price range' })
-  @ApiParam({ name: 'minPrice', required: true, type: Number, description: 'Minimum price' })
-  @ApiParam({ name: 'maxPrice', required: true, type: Number, description: 'Maximum price' })
-  @ApiResponse({
-    status: 200,
-    description: 'Products by price range retrieved successfully',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Invalid price range',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  async getProductsByPriceRange(
-    @Param('minPrice') minPrice: string, 
-    @Param('maxPrice') maxPrice: string, 
-    @Query() query: QueryProductDto
-  ) {
-    try {
-      const minPriceNum = parseFloat(minPrice);
-      const maxPriceNum = parseFloat(maxPrice);
-
-      if (isNaN(minPriceNum) || isNaN(maxPriceNum)) {
-        throw new BadRequestException('Invalid price values');
-      }
-
-      if (minPriceNum < 0 || maxPriceNum < 0) {
-        throw new BadRequestException('Price values must be non-negative');
-      }
-
-      if (minPriceNum > maxPriceNum) {
-        throw new BadRequestException('Minimum price cannot be greater than maximum price');
-      }
-
-      this.logger.log('Fetching products by price range', { minPrice: minPriceNum, maxPrice: maxPriceNum });
-      const result = await this.productsService.getProductsByPriceRange(minPriceNum, maxPriceNum, query);
-      this.logger.log(`Successfully fetched ${result.products.length} products in price range ${minPriceNum}-${maxPriceNum}`);
-      return result;
-    } catch (error) {
-      this.logger.error('Failed to fetch products by price range', error.stack, { minPrice, maxPrice });
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Failed to fetch products by price range: ' + error.message);
-    }
-  }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get full product detail including all child tabs' })
@@ -1173,10 +1070,8 @@ export class ProductsController {
 
   // Legacy endpoint for backward compatibility
   @Patch('legacy/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard, OwnershipGuard)
-  @Roles(Role.ADMIN, Role.VENDOR)
-  @Ownership({ entity: 'product', productIdField: 'id' })
-  @ApiOperation({ summary: 'Update a product (legacy endpoint)' })
+  @Public()
+  @ApiOperation({ summary: 'Update a product (legacy endpoint) - Public Access' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -1217,6 +1112,12 @@ export class ProductsController {
   })
   async update(@Param('id') id: string, @Req() request: FastifyRequest) {
     try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Updating product (legacy endpoint)', { productId: id });
+      
       const parts = request.parts();
       const fields: any = {};
       let imageFile: Express.Multer.File | null = null;
@@ -1266,74 +1167,211 @@ export class ProductsController {
       }
 
       // Update product
-      return this.productsService.update(id, {
+      const result = await this.productsService.update(id, {
         ...fields,
         images: imagePath
       });
+
+      this.logger.log('Product updated successfully (legacy)', { 
+        productId: id, 
+        productName: result.name 
+      });
+
+      return result;
     } catch (error) {
-      if (error instanceof BadRequestException) {
+      this.logger.error('Failed to update product (legacy endpoint)', error.stack, { productId: id });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
-      throw new BadRequestException('Failed to update product: ' + error.message);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update product: ' + error.message);
     }
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard, OwnershipGuard)
-  @Roles(Role.ADMIN, Role.VENDOR)
-  @Ownership({ entity: 'product', productIdField: 'id' })
-  @ApiOperation({ summary: 'Delete a product' })
+  @Public()
+  @ApiOperation({ summary: 'Hard delete a product permanently - Public Access' })
   @ApiParam({ name: 'id', description: 'Product ID', type: String })
   @ApiResponse({
     status: 200,
-    description: 'Product deleted successfully',
+    description: 'Product permanently deleted successfully',
   })
   @ApiResponse({
     status: 404,
     description: 'Product not found',
   })
-  async remove(@Param('id') id: string) {
-    return this.productsService.remove(id);
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async remove(@Param('id') id: string, @Req() req: FastifyRequest) {
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Hard deleting product', { productId: id });
+      const userId = (req as any).user?.id || 'public-user';
+      const result = await this.productsService.hardDelete(id, userId);
+      
+      this.logger.log('Product hard deleted successfully', { productId: id });
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to hard delete product', error.stack, { productId: id });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to hard delete product: ' + error.message);
+    }
   }
 
   @Patch(':id/delete')
-  @UseGuards(JwtAuthGuard, RolesGuard, OwnershipGuard)
-  @Roles(Role.ADMIN, Role.VENDOR)
-  @Ownership({ entity: 'product', productIdField: 'id' })
-  @ApiOperation({ summary: 'Soft delete a product' })
+  @Public()
+  @ApiOperation({ summary: 'Soft delete a product - Public Access' })
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'Product soft deleted successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async softDelete(@Param('id') id: string, @Req() req: FastifyRequest) {
-    const userId = (req as any).user?.id;
-    await this.productsService.softDelete(id, userId);
-    return { success: true };
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Soft deleting product', { productId: id });
+      const userId = (req as any).user?.id || 'public-user';
+      await this.productsService.softDelete(id, userId);
+      
+      this.logger.log('Product soft deleted successfully', { productId: id });
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to soft delete product', error.stack, { productId: id });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to soft delete product: ' + error.message);
+    }
   }
 
   @Patch(':id/restore')
-  @UseGuards(JwtAuthGuard, RolesGuard, OwnershipGuard)
-  @Roles(Role.ADMIN, Role.VENDOR)
-  @Ownership({ entity: 'product', productIdField: 'id' })
-  @ApiOperation({ summary: 'Restore a soft-deleted product' })
+  @Public()
+  @ApiOperation({ summary: 'Restore a soft-deleted product - Public Access' })
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'Product restored successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async restore(@Param('id') id: string, @Req() req: FastifyRequest) {
-    const userId = (req as any).user?.id;
-    await this.productsService.restore(id, userId);
-    return { success: true };
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Restoring product', { productId: id });
+      const userId = (req as any).user?.id || 'public-user';
+      await this.productsService.restore(id, userId);
+      
+      this.logger.log('Product restored successfully', { productId: id });
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to restore product', error.stack, { productId: id });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to restore product: ' + error.message);
+    }
   }
 
   @Patch(':id/toggle-status')
-  @UseGuards(JwtAuthGuard, RolesGuard, OwnershipGuard)
-  @Roles(Role.ADMIN, Role.VENDOR)
-  @Ownership({ entity: 'product', productIdField: 'id' })
-  @ApiOperation({ summary: 'Toggle product active status' })
+  @Public()
+  @ApiOperation({ summary: 'Toggle product active status - Public Access' })
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'Product status toggled successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async toggleStatus(@Param('id') id: string, @Req() req: FastifyRequest) {
-    const userId = (req as any).user?.id;
-    await this.productsService.toggleStatus(id, userId);
-    return { success: true };
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Toggling product status', { productId: id });
+      const userId = (req as any).user?.id || 'public-user';
+      await this.productsService.toggleStatus(id, userId);
+      
+      this.logger.log('Product status toggled successfully', { productId: id });
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to toggle product status', error.stack, { productId: id });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to toggle product status: ' + error.message);
+    }
   }
 
   // Separate routes for read-only fields updates
   @Patch(':id/rating')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Update product rating' })
+  @Public()
+  @ApiOperation({ summary: 'Update product rating - Public Access' })
   @ApiConsumes('application/json')
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
   @ApiBody({
     schema: {
       type: 'object',
@@ -1346,14 +1384,54 @@ export class ProductsController {
     status: 200,
     description: 'Rating updated successfully',
   })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID or rating value',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async updateRating(@Param('id') id: string, @Body() body: { rating: number }) {
-    return this.productsService.updateRating(id, body.rating);
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      if (body.rating === undefined || body.rating === null) {
+        throw new BadRequestException('Rating value is required');
+      }
+
+      if (body.rating < 0 || body.rating > 5) {
+        throw new BadRequestException('Rating must be between 0 and 5');
+      }
+
+      this.logger.log('Updating product rating', { productId: id, rating: body.rating });
+      const result = await this.productsService.updateRating(id, body.rating);
+      
+      this.logger.log('Product rating updated successfully', { productId: id, rating: body.rating });
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to update product rating', error.stack, { productId: id, rating: body.rating });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update product rating: ' + error.message);
+    }
   }
 
   @Patch(':id/reviews-count')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Update product reviews count' })
+  @Public()
+  @ApiOperation({ summary: 'Update product reviews count - Public Access' })
   @ApiConsumes('application/json')
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
   @ApiBody({
     schema: {
       type: 'object',
@@ -1366,14 +1444,54 @@ export class ProductsController {
     status: 200,
     description: 'Reviews count updated successfully',
   })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID or reviews count value',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async updateReviewsCount(@Param('id') id: string, @Body() body: { reviewsCount: number }) {
-    return this.productsService.updateReviewsCount(id, body.reviewsCount);
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      if (body.reviewsCount === undefined || body.reviewsCount === null) {
+        throw new BadRequestException('Reviews count value is required');
+      }
+
+      if (body.reviewsCount < 0) {
+        throw new BadRequestException('Reviews count must be non-negative');
+      }
+
+      this.logger.log('Updating product reviews count', { productId: id, reviewsCount: body.reviewsCount });
+      const result = await this.productsService.updateReviewsCount(id, body.reviewsCount);
+      
+      this.logger.log('Product reviews count updated successfully', { productId: id, reviewsCount: body.reviewsCount });
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to update product reviews count', error.stack, { productId: id, reviewsCount: body.reviewsCount });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update product reviews count: ' + error.message);
+    }
   }
 
   @Patch(':id/views')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Update product views count' })
+  @Public()
+  @ApiOperation({ summary: 'Update product views count - Public Access' })
   @ApiConsumes('application/json')
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
   @ApiBody({
     schema: {
       type: 'object',
@@ -1386,8 +1504,47 @@ export class ProductsController {
     status: 200,
     description: 'Views count updated successfully',
   })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID or views count value',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async updateViews(@Param('id') id: string, @Body() body: { views: number }) {
-    return this.productsService.updateViews(id, body.views);
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      if (body.views === undefined || body.views === null) {
+        throw new BadRequestException('Views count value is required');
+      }
+
+      if (body.views < 0) {
+        throw new BadRequestException('Views count must be non-negative');
+      }
+
+      this.logger.log('Updating product views count', { productId: id, views: body.views });
+      const result = await this.productsService.updateViews(id, body.views);
+      
+      this.logger.log('Product views count updated successfully', { productId: id, views: body.views });
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to update product views count', error.stack, { productId: id, views: body.views });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update product views count: ' + error.message);
+    }
   }
 
   @Post(':id/upload-image')

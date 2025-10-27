@@ -10,6 +10,8 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Request,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -32,7 +34,7 @@ import { Role } from '../../common/enums/role.enum';
 @ApiTags('users')
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@ApiBearerAuth()
+@ApiBearerAuth('JWT-auth')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -105,9 +107,12 @@ export class UsersController {
     status: 401,
     description: 'Unauthorized - invalid token',
   })
-  async getProfile(@Param('id') id: string): Promise<User> {
-    // TODO: Get user ID from JWT token
-    return this.usersService.findOne(id);
+  async getProfile(@Request() req): Promise<User> {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new UnauthorizedException('User information not found in token');
+    }
+    return this.usersService.findOne(userId);
   }
 
   @Get(':id')

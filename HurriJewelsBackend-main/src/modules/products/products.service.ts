@@ -2208,17 +2208,13 @@ export class ProductsService {
     }
   }
 
-  async updateReviewsCount(productId: string, reviewsCount: number) {
+  async updateReviewsCount(productId: string) {
     try {
       if (!productId || productId.trim() === '') {
         throw new BadRequestException('Product ID is required');
       }
 
-      if (reviewsCount < 0) {
-        throw new BadRequestException('Reviews count must be non-negative');
-      }
-
-      this.logger.log('Updating product reviews count', { productId, reviewsCount });
+      this.logger.log('Updating product reviews count', { productId });
 
       const product = await this.prisma.product.findUnique({
         where: { id: productId },
@@ -2228,6 +2224,16 @@ export class ProductsService {
         throw new NotFoundException(`Product with ID ${productId} not found`);
       }
 
+      // Count all active reviews for this product
+      const reviewsCount = await this.prisma.review.count({
+        where: {
+          productId: productId,
+          isActive: true,
+          isDeleted: false,
+        },
+      });
+
+      // Update the product with the actual count
       const updatedProduct = await this.prisma.product.update({
         where: { id: productId },
         data: { reviewsCount } as any,
@@ -2239,22 +2245,18 @@ export class ProductsService {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.logger.error('Failed to update product reviews count', error.stack, { productId, reviewsCount });
+      this.logger.error('Failed to update product reviews count', error.stack, { productId });
       throw new InternalServerErrorException('Failed to update product reviews count: ' + error.message);
     }
   }
 
-  async updateViews(productId: string, views: number) {
+  async incrementViews(productId: string) {
     try {
       if (!productId || productId.trim() === '') {
         throw new BadRequestException('Product ID is required');
       }
 
-      if (views < 0) {
-        throw new BadRequestException('Views count must be non-negative');
-      }
-
-      this.logger.log('Updating product views count', { productId, views });
+      this.logger.log('Incrementing product views count', { productId });
 
       const product = await this.prisma.product.findUnique({
         where: { id: productId },
@@ -2264,19 +2266,159 @@ export class ProductsService {
         throw new NotFoundException(`Product with ID ${productId} not found`);
       }
 
+      // Increment views by 1
       const updatedProduct = await this.prisma.product.update({
         where: { id: productId },
-        data: { views } as any,
+        data: {
+          views: {
+            increment: 1,
+          },
+        } as any,
       });
 
-      this.logger.log('Product views count updated successfully', { productId, views });
+      this.logger.log('Product views count incremented successfully', { productId, newViews: updatedProduct.views });
       return updatedProduct;
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.logger.error('Failed to update product views count', error.stack, { productId, views });
-      throw new InternalServerErrorException('Failed to update product views count: ' + error.message);
+      this.logger.error('Failed to increment product views count', error.stack, { productId });
+      throw new InternalServerErrorException('Failed to increment product views count: ' + error.message);
+    }
+  }
+
+  // ==================== REVIEW METHODS ====================
+
+  async getProductReviews(productId: string) {
+    try {
+      if (!productId || productId.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Fetching reviews for product', { productId });
+
+      // Check if product exists
+      const product = await this.prisma.product.findUnique({
+        where: { id: productId },
+      });
+
+      if (!product) {
+        throw new NotFoundException(`Product with ID ${productId} not found`);
+      }
+
+      // Fetch all active reviews for this product
+      const reviews = await this.prisma.review.findMany({
+        where: {
+          productId: productId,
+          isActive: true,
+          isDeleted: false,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatar: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      this.logger.log('Fetched reviews for product successfully', { productId, count: reviews.length });
+      return reviews;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('Failed to fetch reviews for product', error.stack, { productId });
+      throw new InternalServerErrorException('Failed to fetch reviews: ' + error.message);
+    }
+  }
+
+  async createReview(productId: string, userId: string, rating: number, title?: string, comment?: string) {
+    try {
+      if (!productId || productId.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      if (!userId || userId.trim() === '') {
+        throw new BadRequestException('User ID is required');
+      }
+
+      if (!rating || rating < 1 || rating > 5) {
+        throw new BadRequestException('Rating must be between 1 and 5');
+      }
+
+      this.logger.log('Creating review', { productId, userId, rating });
+
+      // Check if product exists
+      const product = await this.prisma.product.findUnique({
+        where: { id: productId },
+      });
+
+      if (!product) {
+        throw new NotFoundException(`Product with ID ${productId} not found`);
+      }
+
+      // Check if user already reviewed this product
+      const existingReview = await this.prisma.review.findUnique({
+        where: {
+          userId_productId: {
+            userId: userId,
+            productId: productId,
+          },
+        },
+      });
+
+      if (existingReview) {
+        throw new ConflictException('User has already reviewed this product');
+      }
+
+      // Create the review
+      const review = await this.prisma.review.create({
+        data: {
+          userId,
+          productId,
+          rating,
+          title,
+          comment,
+          createdBy: userId,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatar: true,
+            },
+          },
+        },
+      });
+
+      // Update product rating and reviews count
+      await this.updateReviewsCount(productId);
+      
+      // Calculate and update average rating
+      const reviews = await this.getProductReviews(productId);
+      const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
+      const averageRating = reviews.length > 0 ? totalRating / reviews.length : 0;
+
+      await this.prisma.product.update({
+        where: { id: productId },
+        data: { rating: averageRating } as any,
+      });
+
+      this.logger.log('Review created successfully', { reviewId: review.id, productId, userId });
+      return review;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException || error instanceof ConflictException) {
+        throw error;
+      }
+      this.logger.error('Failed to create review', error.stack, { productId, userId });
+      throw new InternalServerErrorException('Failed to create review: ' + error.message);
     }
   }
 

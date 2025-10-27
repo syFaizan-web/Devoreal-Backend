@@ -8,6 +8,7 @@ import {
   Query, 
   Body, 
   Req,
+  Request,
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
@@ -1427,22 +1428,21 @@ export class ProductsController {
     }
   }
 
-  @Patch(':id/reviews-count')
+  @Get(':id/reviews-count')
   @Public()
-  @ApiOperation({ summary: 'Update product reviews count - Public Access' })
-  @ApiConsumes('application/json')
+  @ApiOperation({ summary: 'Get and update product reviews count - Public Access', description: 'Gets the product and updates the reviews count from actual reviews in the database' })
   @ApiParam({ name: 'id', description: 'Product ID', type: String })
-  @ApiBody({
+  @ApiResponse({
+    status: 200,
+    description: 'Product retrieved with updated reviews count',
     schema: {
       type: 'object',
       properties: {
-        reviewsCount: { type: 'number', minimum: 0 }
+        id: { type: 'string' },
+        name: { type: 'string' },
+        reviewsCount: { type: 'number' }
       }
     }
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Reviews count updated successfully',
   })
   @ApiResponse({
     status: 404,
@@ -1450,59 +1450,50 @@ export class ProductsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad request - Invalid product ID or reviews count value',
+    description: 'Bad request - Invalid product ID',
   })
   @ApiResponse({
     status: 500,
     description: 'Internal server error',
   })
-  async updateReviewsCount(@Param('id') id: string, @Body() body: { reviewsCount: number }) {
+  async getReviewsCount(@Param('id') id: string) {
     try {
       if (!id || id.trim() === '') {
         throw new BadRequestException('Product ID is required');
       }
 
-      if (body.reviewsCount === undefined || body.reviewsCount === null) {
-        throw new BadRequestException('Reviews count value is required');
-      }
-
-      if (body.reviewsCount < 0) {
-        throw new BadRequestException('Reviews count must be non-negative');
-      }
-
-      this.logger.log('Updating product reviews count', { productId: id, reviewsCount: body.reviewsCount });
-      const result = await this.productsService.updateReviewsCount(id, body.reviewsCount);
+      this.logger.log('Getting and updating product reviews count', { productId: id });
+      const result = await this.productsService.updateReviewsCount(id);
       
-      this.logger.log('Product reviews count updated successfully', { productId: id, reviewsCount: body.reviewsCount });
+      this.logger.log('Product reviews count retrieved and updated successfully', { productId: id, reviewsCount: result.reviewsCount });
       return result;
     } catch (error) {
-      this.logger.error('Failed to update product reviews count', error.stack, { productId: id, reviewsCount: body.reviewsCount });
+      this.logger.error('Failed to get product reviews count', error.stack, { productId: id });
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new InternalServerErrorException('Failed to update product reviews count: ' + error.message);
+      throw new InternalServerErrorException('Failed to get product reviews count: ' + error.message);
     }
   }
 
-  @Patch(':id/views')
+  @Post(':id/views')
   @Public()
-  @ApiOperation({ summary: 'Update product views count - Public Access' })
-  @ApiConsumes('application/json')
+  @ApiOperation({ summary: 'Increment product views count - Public Access', description: 'Increments the product views count by 1' })
   @ApiParam({ name: 'id', description: 'Product ID', type: String })
-  @ApiBody({
+  @ApiResponse({
+    status: 200,
+    description: 'Views count incremented successfully',
     schema: {
       type: 'object',
       properties: {
-        views: { type: 'number', minimum: 0 }
+        id: { type: 'string' },
+        name: { type: 'string' },
+        views: { type: 'number' }
       }
     }
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Views count updated successfully',
   })
   @ApiResponse({
     status: 404,
@@ -1510,40 +1501,199 @@ export class ProductsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad request - Invalid product ID or views count value',
+    description: 'Bad request - Invalid product ID',
   })
   @ApiResponse({
     status: 500,
     description: 'Internal server error',
   })
-  async updateViews(@Param('id') id: string, @Body() body: { views: number }) {
+  async incrementViews(@Param('id') id: string) {
     try {
       if (!id || id.trim() === '') {
         throw new BadRequestException('Product ID is required');
       }
 
-      if (body.views === undefined || body.views === null) {
-        throw new BadRequestException('Views count value is required');
-      }
-
-      if (body.views < 0) {
-        throw new BadRequestException('Views count must be non-negative');
-      }
-
-      this.logger.log('Updating product views count', { productId: id, views: body.views });
-      const result = await this.productsService.updateViews(id, body.views);
+      this.logger.log('Incrementing product views count', { productId: id });
+      const result = await this.productsService.incrementViews(id);
       
-      this.logger.log('Product views count updated successfully', { productId: id, views: body.views });
+      this.logger.log('Product views count incremented successfully', { productId: id, newViews: result.views });
       return result;
     } catch (error) {
-      this.logger.error('Failed to update product views count', error.stack, { productId: id, views: body.views });
+      this.logger.error('Failed to increment product views count', error.stack, { productId: id });
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new InternalServerErrorException('Failed to update product views count: ' + error.message);
+      throw new InternalServerErrorException('Failed to increment product views count: ' + error.message);
+    }
+  }
+
+  @Get(':id/reviews')
+  @Public()
+  @ApiOperation({ summary: 'Get all reviews for a product - Public Access', description: 'Retrieves all active reviews for a specific product' })
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'Reviews retrieved successfully',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          userId: { type: 'string' },
+          productId: { type: 'string' },
+          rating: { type: 'number' },
+          title: { type: 'string' },
+          comment: { type: 'string' },
+          isVerified: { type: 'boolean' },
+          createdAt: { type: 'string', format: 'date-time' },
+          user: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              fullName: { type: 'string' },
+              avatar: { type: 'string' }
+            }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid product ID',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async getProductReviews(@Param('id') id: string) {
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      this.logger.log('Fetching reviews for product', { productId: id });
+      const reviews = await this.productsService.getProductReviews(id);
+      
+      this.logger.log('Reviews fetched successfully', { productId: id, count: reviews.length });
+      return reviews;
+    } catch (error) {
+      this.logger.error('Failed to fetch reviews', error.stack, { productId: id });
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to fetch reviews: ' + error.message);
+    }
+  }
+
+  @Post(':id/reviews')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Create a review for a product - Authenticated Access', description: 'Creates a new review for a product. User must be authenticated.' })
+  @ApiParam({ name: 'id', description: 'Product ID', type: String })
+  @ApiConsumes('application/json')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['rating'],
+      properties: {
+        rating: { type: 'integer', minimum: 1, maximum: 5, description: 'Rating from 1 to 5' },
+        title: { type: 'string', description: 'Review title (optional)' },
+        comment: { type: 'string', description: 'Review comment (optional)' }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Review created successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        userId: { type: 'string' },
+        productId: { type: 'string' },
+        rating: { type: 'number' },
+        title: { type: 'string' },
+        comment: { type: 'string' },
+        isVerified: { type: 'boolean' },
+        createdAt: { type: 'string', format: 'date-time' },
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            fullName: { type: 'string' },
+            avatar: { type: 'string' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid data',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'User has already reviewed this product',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Authentication required',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
+  async createReview(
+    @Param('id') id: string,
+    @Body() body: { rating: number; title?: string; comment?: string },
+    @Request() req: any
+  ) {
+    try {
+      if (!id || id.trim() === '') {
+        throw new BadRequestException('Product ID is required');
+      }
+
+      const userId = req.user?.id;
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      if (!body.rating || body.rating < 1 || body.rating > 5) {
+        throw new BadRequestException('Rating must be between 1 and 5');
+      }
+
+      this.logger.log('Creating review', { productId: id, userId, rating: body.rating });
+      const review = await this.productsService.createReview(
+        id,
+        userId,
+        body.rating,
+        body.title,
+        body.comment
+      );
+      
+      this.logger.log('Review created successfully', { reviewId: review.id, productId: id, userId });
+      return review;
+    } catch (error) {
+      this.logger.error('Failed to create review', error.stack, { productId: id });
+      if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to create review: ' + error.message);
     }
   }
 

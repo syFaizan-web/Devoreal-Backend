@@ -13,6 +13,7 @@ import {
   Query,
   UseInterceptors,
   InternalServerErrorException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -215,7 +216,7 @@ export class AuthController {
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Restore user (Authorized: SUPER_ADMIN, ADMIN)' })
-  @ApiBearerAuth()
+  @ApiBearerAuth('JWT-auth')
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User restored successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
@@ -231,7 +232,7 @@ export class AuthController {
   @Roles(Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Hard delete user (Authorized: SUPER_ADMIN)' })
-  @ApiBearerAuth()
+  @ApiBearerAuth('JWT-auth')
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 204, description: 'User permanently deleted' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
@@ -313,7 +314,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Change password while logged in' })
-  @ApiBearerAuth()
+  @ApiBearerAuth('JWT-auth')
   @ApiBody({ type: ChangePasswordDto })
   @ApiResponse({
     status: 200,
@@ -340,9 +341,9 @@ export class AuthController {
   }
 
   @Get('sessions')
-  @UseGuards(JwtBlacklistGuard)
+  @UseGuards(JwtAuthGuard, JwtBlacklistGuard)
   @ApiOperation({ summary: 'List all active sessions for logged-in user' })
-  @ApiBearerAuth()
+  @ApiBearerAuth('JWT-auth')
   @ApiResponse({
     status: 200,
     description: 'Sessions retrieved successfully',
@@ -353,14 +354,18 @@ export class AuthController {
     description: 'Unauthorized - Token invalid or revoked',
   })
   async getSessions(@Request() req): Promise<SessionDto[]> {
-    return this.authService.getSessions(req.user.sub);
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new InternalServerErrorException('User information not found in token');
+    }
+    return this.authService.getSessions(userId);
   }
 
   @Delete('sessions/:id')
-  @UseGuards(JwtBlacklistGuard)
+  @UseGuards(JwtAuthGuard, JwtBlacklistGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoke a specific session' })
-  @ApiBearerAuth()
+  @ApiBearerAuth('JWT-auth')
   @ApiParam({ name: 'id', description: 'Session ID' })
   @ApiResponse({
     status: 204,
@@ -378,13 +383,17 @@ export class AuthController {
     @Request() req,
     @Param('id') sessionId: string,
   ): Promise<void> {
-    await this.authService.revokeSession(req.user.sub, sessionId);
+      const userId = req.user?.id;
+      if (!userId) {
+        throw new InternalServerErrorException('User information not found in token');
+      }
+      await this.authService.revokeSession(userId, sessionId);
   }
 
   @Get('me')
-  @UseGuards(JwtBlacklistGuard)
+  @UseGuards(JwtAuthGuard, JwtBlacklistGuard)
   @ApiOperation({ summary: 'Get logged-in user profile' })
-  @ApiBearerAuth()
+  @ApiBearerAuth('JWT-auth')
   @ApiResponse({
     status: 200,
     description: 'User profile retrieved successfully',
@@ -394,13 +403,17 @@ export class AuthController {
     description: 'Unauthorized - Token invalid or revoked',
   })
   async getProfile(@Request() req): Promise<any> {
-    return this.authService.getProfile(req.user.sub);
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new InternalServerErrorException('User information not found in token');
+    }
+    return this.authService.getProfile(userId);
   }
 
   @Patch('me')
-  @UseGuards(JwtBlacklistGuard)
+  @UseGuards(JwtAuthGuard, JwtBlacklistGuard)
   @ApiOperation({ summary: 'Update logged-in user profile' })
-  @ApiBearerAuth()
+  @ApiBearerAuth('JWT-auth')
   @ApiBody({ type: UpdateProfileDto })
   @ApiResponse({
     status: 200,
@@ -414,7 +427,11 @@ export class AuthController {
     @Request() req,
     @Body() updateProfileDto: UpdateProfileDto,
   ): Promise<any> {
-    return this.authService.updateProfile(req.user.sub, updateProfileDto);
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new InternalServerErrorException('User information not found in token');
+    }
+    return this.authService.updateProfile(userId, updateProfileDto);
   }
 
   @Public()

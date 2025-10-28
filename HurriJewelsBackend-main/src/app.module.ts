@@ -23,6 +23,7 @@ import { SignaturePiecesModule } from './modules/signature-pieces/signature-piec
 import { ArticlesModule } from './modules/articles/articles.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { SearchModule } from './modules/search/search.module';
+import { ShippingModule } from './modules/shipping/shipping.module';
 
 import { validationSchema } from './config/validation';
 
@@ -60,6 +61,7 @@ import { validationSchema } from './config/validation';
     ArticlesModule,
     EngagementModule,
     SearchModule,
+    ShippingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -35,6 +35,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         'OrderItem',
         'Payment',
         'ShippingInfo',
+        'ShipmentItem',
         'AIModel',
         'Review',
         'AuditLog',
@@ -155,63 +156,82 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     // One-time normalization to fix any rows out of sync (must run after connect)
     try {
-      const tables = [
-        'users',
-        'categories',
-        'products',
-        'vendor_profiles',
-        'vendor_verifications',
-        'stores',
-        'orders',
-        'order_items',
-        'payments',
-        'shipping_info',
-        'ai_models',
-        'reviews',
-        'audit_logs',
-        'menu_items',
-      ];
-      for (const tbl of tables) {
-        await this.$executeRawUnsafe(
-          `UPDATE public.${tbl} SET "isActive" = CASE WHEN "isDeleted" IS TRUE THEN FALSE ELSE TRUE END WHERE "isActive" IS DISTINCT FROM (NOT COALESCE("isDeleted", FALSE))`
-        );
-      }
+      await this.$executeRawUnsafe(`
+        DO $$
+        DECLARE tbl TEXT;
+        BEGIN
+          FOREACH tbl IN ARRAY ARRAY[
+            'users',
+            'categories',
+            'products',
+            'vendor_profiles',
+            'vendor_verifications',
+            'stores',
+            'orders',
+            'order_items',
+            'payments',
+            'shipping_info',
+            'ai_models',
+            'reviews',
+            'audit_logs',
+            'menu_items'
+          ] LOOP
+            IF EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name=tbl AND column_name='isActive'
+            ) AND EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name=tbl AND column_name='isDeleted'
+            ) THEN
+              EXECUTE format('UPDATE public.%I SET "isActive" = CASE WHEN "isDeleted" IS TRUE THEN FALSE ELSE TRUE END WHERE "isActive" IS DISTINCT FROM (NOT COALESCE("isDeleted", FALSE))', tbl);
+            END IF;
+          END LOOP;
+        END $$;
+      `);
     } catch (e) {
       this.logger.warn('Normalization skipped', { error: (e as any)?.message });
     }
 
-    // Ensure DB constraints exist to enforce consistency
+    // Ensure DB constraints exist to enforce consistency (only on tables that have both columns)
     try {
       await this.$executeRawUnsafe(`
         DO $$
-        DECLARE r RECORD;
+        DECLARE tbl TEXT;
+        DECLARE v_conname TEXT;
         BEGIN
-          FOR r IN (
-            SELECT 'users' AS tbl UNION ALL
-            SELECT 'categories' UNION ALL
-            SELECT 'products' UNION ALL
-            SELECT 'vendor_profiles' UNION ALL
-            SELECT 'vendor_verifications' UNION ALL
-            SELECT 'stores' UNION ALL
-            SELECT 'orders' UNION ALL
-            SELECT 'order_items' UNION ALL
-            SELECT 'payments' UNION ALL
-            SELECT 'shipping_info' UNION ALL
-            SELECT 'ai_models' UNION ALL
-            SELECT 'reviews' UNION ALL
-            SELECT 'audit_logs' UNION ALL
-            SELECT 'menu_items'
-          ) LOOP
-            IF NOT EXISTS (
-              SELECT 1 FROM pg_constraint c
-              JOIN pg_class t ON t.oid = c.conrelid
-              JOIN pg_namespace n ON n.oid = t.relnamespace
-              WHERE c.conname = format('%I_isactive_not_isdeleted_ck', r.tbl)
-                AND n.nspname = 'public'
-                AND t.relname = r.tbl
+          FOREACH tbl IN ARRAY ARRAY[
+            'users',
+            'categories',
+            'products',
+            'vendor_profiles',
+            'vendor_verifications',
+            'stores',
+            'orders',
+            'order_items',
+            'payments',
+            'shipping_info',
+            'ai_models',
+            'reviews',
+            'audit_logs',
+            'menu_items'
+          ] LOOP
+            IF EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name=tbl AND column_name='isActive'
+            ) AND EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name=tbl AND column_name='isDeleted'
             ) THEN
-              EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK ("isActive" = NOT COALESCE("isDeleted", FALSE)) NOT VALID', r.tbl, r.tbl || '_isactive_not_isdeleted_ck');
-              EXECUTE format('ALTER TABLE public.%I VALIDATE CONSTRAINT %I', r.tbl, r.tbl || '_isactive_not_isdeleted_ck');
+              v_conname := tbl || '_isactive_not_isdeleted_ck';
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE c.conname = v_conname AND n.nspname = 'public' AND t.relname = tbl
+              ) THEN
+                EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK ("isActive" = NOT COALESCE("isDeleted", FALSE)) NOT VALID', tbl, v_conname);
+                EXECUTE format('ALTER TABLE public.%I VALIDATE CONSTRAINT %I', tbl, v_conname);
+              END IF;
             END IF;
           END LOOP;
         END $$;

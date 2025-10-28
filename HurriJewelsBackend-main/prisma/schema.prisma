@@ -19,6 +19,37 @@ enum Role {
   USER
 }
 
+// Shipping Enums
+enum ShipmentStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED
+  RETURNED
+  CANCELLED
+}
+
+enum ShippingMethod {
+  STANDARD
+  EXPRESS
+  OVERNIGHT
+  SAME_DAY
+  ECONOMY
+  INTERNATIONAL
+  LOCAL_DELIVERY
+}
+
+enum WeightUnit {
+  KG
+  LB
+  OZ
+  G
+}
+
 // User Management
 model User {
   id                String    @id @default(uuid())
@@ -660,7 +691,7 @@ model Order {
   vendor            VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   items             OrderItem[]
   payment           Payment?
-  shipping          ShippingInfo?
+  shipping          ShippingInfo[]
 
   @@map("orders")
 }
@@ -720,36 +751,92 @@ model Payment {
 
 // Shipping Management
 model ShippingInfo {
-  id                String    @id @default(uuid())
-  orderId           String    @unique
-  customerId        String
-  address           String
-  city              String
-  state             String
-  country           String
-  postalCode        String
-  phone             String
-  trackingNumber    String?
-  carrier           String?
-  status            String    @default("PENDING") // PENDING, SHIPPED, DELIVERED, FAILED
-  method            String    @default("STANDARD") // STANDARD, EXPRESS, SAME_DAY
-  cost              Float
-  estimatedDelivery DateTime?
-  deliveredAt       DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  isActive          Boolean   @default(true)
-  isDeleted         Boolean   @default(false)
-  createdBy         String?
-  updatedBy         String?
-  deletedAt         DateTime?
-  deletedBy         String?
+  id                  String    @id @default(uuid())
+  orderId             String
+  customerId          String
+  sellerId            String?
+  fulfillmentCenterId String?
+  addressLine1        String
+  addressLine2        String?
+  landmark            String?
+  receiverName        String?
+  city                String
+  state               String
+  country             String
+  postalCode          String
+  phone               String
+  email               String?
 
-  // Relations
-  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  user              User      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  carrier             String?
+  trackingNumber      String?
+  carrierService      String?
+  externalCarrierId   String?
+  labelUrl            String?
+  proofOfDeliveryUrl  String?
+  status              ShipmentStatus @default(PENDING)
+  method              ShippingMethod @default(STANDARD)
+
+  cost                Decimal  @db.Decimal(12,2)
+  currency            String   @default("USD")
+
+  weight              Decimal? @db.Decimal(8,3)
+  weightUnit          WeightUnit @default(KG)
+  length              Decimal?
+  width               Decimal?
+  height              Decimal?
+  packageType         String?
+
+  estimatedDelivery   DateTime?
+  shippedAt           DateTime?
+  deliveredAt         DateTime?
+  attemptCount        Int      @default(0)
+  lastStatusUpdateAt  DateTime?
+
+  isActive            Boolean  @default(true)
+  isDeleted           Boolean  @default(false)
+  deletedAt           DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  createdBy           String?
+  updatedBy           String?
+  deletedBy           String?
+
+  // relations
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user                User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items               ShipmentItem[]
 
   @@map("shipping_info")
+  @@index([orderId])
+  @@index([customerId, status])
+  @@unique([carrier, trackingNumber])
+}
+
+// Shipment Items
+model ShipmentItem {
+  id                String    @id @default(uuid())
+  shipmentId        String
+  orderItemId       String?
+  productId         String?
+  sku               String?
+  quantity          Int
+  weight            Decimal?  @db.Decimal(8,3)
+  description       String?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  isActive           Boolean   @default(true)
+  isDeleted          Boolean   @default(false)
+  deletedAt          DateTime?
+  createdBy          String?
+  updatedBy          String?
+  deletedBy          String?
+  
+  // Relations
+  shipment          ShippingInfo @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  
+  @@map("shipment_items")
+  @@index([shipmentId])
 }
 
 // AI Models
